@@ -1,0 +1,18 @@
+# Core dependencies for ingest_rag
+click>=8.0
+qdrant-client>=1.4
+openai>=0.28
+tqdm>=4.0
+# HTML parsing and fetching
+beautifulsoup4>=4.9
+requests>=2.0
+# Environment variable support
+python-dotenv>=0.19
+# Document ingestion
+# Pin to docling v1 to use extract/chunk API
+docling<2.0
+# Fallback core library for docling
+docling-core>=2.27
+
+# Development and testing
+pytest>=6.0
