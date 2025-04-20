@@ -10,9 +10,10 @@ requests>=2.0
 python-dotenv>=0.19
 # Document ingestion
 # Pin to docling v1 to use extract/chunk API
-docling<2.0
+#docling<2.0
 # Fallback core library for docling
 docling-core>=2.27
 
 # Development and testing
 pytest>=6.0
+flask
