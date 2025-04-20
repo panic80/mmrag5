@@ -68,15 +68,17 @@ def handle_slash():
             import shlex
             import requests
             import uuid
-            # Re‑use the helper utilities from ingest_rag.  We purposefully do
-            # *not* import the local `chunk_text` helper anymore – all
-            # extraction / chunking is now delegated to docling via
-            # ingest_rag.load_documents().
-            from ingest_rag import get_openai_client, load_documents, embed_and_upsert, chunk_text as _legacy_chunk_text
+            # Re‑use helper utilities and collection management from ingest_rag
+            from ingest_rag import get_openai_client, load_documents, embed_and_upsert, chunk_text as _legacy_chunk_text, ensure_collection
             from qdrant_client import QdrantClient
 
             # Parse optional collection override; remaining args become sources
             args = shlex.split(text or "")
+            # Detect --purge to clear and recreate the entire collection
+            purge = False
+            if "--purge" in args:
+                purge = True
+                args = [a for a in args if a != "--purge"]
             collection = "rag_data"
             if "--collection" in args:
                 idx = args.index("--collection")
@@ -102,15 +104,57 @@ def handle_slash():
                 qdrant_api_key = os.environ.get("QDRANT_API_KEY")
                 openai_client = get_openai_client(openai_api_key)
                 client = QdrantClient(url=qdrant_url_env, api_key=qdrant_api_key)
+                # Purge existing collection if requested
+                if purge:
+                    try:
+                        client.delete_collection(collection_name=collection)
+                    except Exception as e:
+                        return jsonify({"text": f"❌ Failed to purge collection '{collection}': {e}"}), 200
+                    try:
+                        ensure_collection(client, collection, vector_size=3072)
+                    except Exception as e:
+                        return jsonify({"text": f"❌ Failed to recreate collection '{collection}': {e}"}), 200
 
                 total_chunks = 0
+                # Helper imports for URL-based downloads
+                import tempfile, urllib.parse
                 for source in args:
-                    # Load documents from URL or path
-                    docs = load_documents(source, chunk_size=500)
+                    local_source = source
+                    # If source is a remote URL and looks like a PDF, download it first
+                    if source.lower().startswith(("http://", "https://")):
+                        parsed = urllib.parse.urlparse(source)
+                        ext = os.path.splitext(parsed.path)[1].lower()
+                        if ext == ".pdf":
+                            # Download PDF to temporary file
+                            tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
+                            tmp_path = tmp_file.name
+                            tmp_file.close()
+                            try:
+                                resp = requests.get(source, stream=True, timeout=60)
+                                resp.raise_for_status()
+                                with open(tmp_path, "wb") as f:
+                                    for chunk in resp.iter_content(chunk_size=8192):
+                                        f.write(chunk)
+                                local_source = tmp_path
+                            except Exception as e:
+                                # Cleanup on failure
+                                try:
+                                    os.remove(tmp_path)
+                                except Exception:
+                                    pass
+                                return jsonify({"text": f"❌ Failed to download {source}: {e}"}), 200
+                    # Load documents from local file or other source via docling
+                    docs = load_documents(local_source, chunk_size=500)
                     count = len(docs)
                     total_chunks += count
                     # Embed and upsert
-                    embed_and_upsert(client, collection, docs, openai_client, batch_size=64)
+                    embed_and_upsert(client, collection, docs, openai_client, batch_size=64, deterministic_id=True)
+                    # Clean up temporary file if downloaded
+                    if local_source != source:
+                        try:
+                            os.remove(local_source)
+                        except Exception:
+                            pass
 
                 return f"Ingested {total_chunks} chunks from {len(args)} source(s) into '{collection}'.", 200, {"Content-Type": "text/plain"}
 
@@ -219,9 +263,19 @@ def handle_slash():
             qdrant_api_key = os.environ.get("QDRANT_API_KEY")
             openai_client = get_openai_client(openai_api_key)
             client = QdrantClient(url=qdrant_url_env, api_key=qdrant_api_key)
+            # Purge existing collection if requested
+            if purge:
+                try:
+                    client.delete_collection(collection_name=collection)
+                except Exception as e:
+                    return jsonify({"text": f"❌ Failed to purge collection '{collection}': {e}"}), 200
+                try:
+                    ensure_collection(client, collection, vector_size=3072)
+                except Exception as e:
+                    return jsonify({"text": f"❌ Failed to recreate collection '{collection}': {e}"}), 200
 
-            # Embed and upsert all chunks
-            embed_and_upsert(client, collection, docs_list, openai_client, batch_size=64)
+            # Embed and upsert all chunks (incremental)
+            embed_and_upsert(client, collection, docs_list, openai_client, batch_size=64, deterministic_id=True)
 
             return (
                 f"Ingested {len(docs_list)} chunks from {len(messages)} messages into '{collection}'.",

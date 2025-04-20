@@ -42,6 +42,7 @@ from typing import Iterable, List, Sequence
 
 import click
 from tqdm.auto import tqdm
+# deterministic UUID generation does not require hashlib
 
 # Optional dependencies – import lazily so that the error message is clearer.
 
@@ -164,6 +165,25 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50) -> Lis
             meta = {"url": source, "chunk_index": idx}
             documents.append(Document(content=chunk, metadata=meta))
         return documents
+    # If source is a local PDF file, extract text via pdfminer.six
+    if source.lower().endswith(".pdf") and os.path.isfile(source):
+        try:
+            from pdfminer.high_level import extract_text
+        except ImportError:
+            click.echo(
+                "[fatal] The Python package 'pdfminer.six' is required for PDF extraction."
+                " Install it with: pip install pdfminer.six",
+                err=True,
+            )
+            sys.exit(1)
+        # Extract text and chunk
+        text = extract_text(source)
+        text_chunks = chunk_text(text, chunk_size)
+        documents: list[Document] = []
+        for idx, chunk in enumerate(text_chunks):
+            meta = {"path": source, "chunk_index": idx}
+            documents.append(Document(content=chunk, metadata=meta))
+        return documents
     # Otherwise, attempt to use docling extract + chunk pipeline for local files
     try:
         # Use new docling modules; fall back to core package
@@ -284,6 +304,7 @@ def embed_and_upsert(
     openai_client,
     batch_size: int = 100,
     model_name: str = "text-embedding-3-large",
+    deterministic_id: bool = False,
 ):
     """Embed *docs* in batches and upsert them into Qdrant."""
 
@@ -306,10 +327,20 @@ def embed_and_upsert(
 
         points = []
         for doc, vector in zip(batch, embeddings):
-            point_id = str(uuid.uuid4())
-            # include the chunk text in payload to avoid re-fetching at query time
-            payload = doc.metadata.copy()
-            payload["chunk_text"] = doc.content
+            metadata = doc.metadata.copy()
+            content = doc.content
+            if deterministic_id:
+                # Compute a deterministic UUID5 from metadata and content
+                try:
+                    meta_str = json.dumps(metadata, sort_keys=True, default=str)
+                except Exception:
+                    meta_str = str(metadata)
+                id_input = meta_str + "\n" + content
+                point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, id_input))
+            else:
+                point_id = str(uuid.uuid4())
+            payload = metadata
+            payload["chunk_text"] = content
             points.append(
                 rest.PointStruct(id=point_id, vector=vector, payload=payload)
             )
