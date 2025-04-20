@@ -11,6 +11,7 @@ python-dotenv>=0.19
 # Document ingestion (docling-core extract, chunk & PDF parsing)
 docling-core>=2.27
 pdfminer.six>=20201018
+rank-bm25>=0.2.2
 
 # Development and testing
 pytest>=6.0

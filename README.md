@@ -154,9 +154,9 @@
  python ingest_rag.py --source https://example.com/report.pdf
  ```
 
- **Query CLI**:
+ **Query CLI** (default top-150 chunks):
  ```bash
- python query_rag.py --collection knowledge --k 5 "What is the refund policy?"
+ python query_rag.py --collection knowledge "What is the refund policy?"
  ```
 
  **Hybrid + LLM Answer**:
@@ -221,10 +221,11 @@
  - `--distance <metric>`      Vector distance: `Cosine`, `Dot`, `Euclid` (default: `Cosine`).
  - `--chunk-size <int>`       Max characters per chunk (default: 500).
  - `--chunk-overlap <int>`    Overlap characters between chunks (default: 50).
+- `--bm25-index <path>`       Path to write BM25 JSON index mapping point IDs to chunk_text (default: `<collection>_bm25_index.json`).
 
  ### query_rag.py
  - `--collection <name>`      Qdrant collection to query (default: `rag_data`).
- - `--k <int>`                Number of nearest neighbors to retrieve (default: 5).
+- `--k <int>`                Number of nearest neighbors to retrieve (default: 150).
  - `--snippet/--no-snippet`   Show or hide text snippets (default: show).
  - `--model <name>`           OpenAI embedding model (default: `text-embedding-3-large`).
  - `--qdrant-host <host>`     Qdrant host (default: `localhost`).
@@ -233,9 +234,9 @@
  - `--qdrant-api-key <key>`   Qdrant API key (or use `QDRANT_API_KEY` env var).
  - `--openai-api-key <key>`   OpenAI API key (or use `OPENAI_API_KEY` env var).
  - `--llm-model <name>`       LLM for answer generation (default: `gpt-4.1-mini`; set to empty to skip).
- - `--summary`                Generate summary & answer using the LLM (requires `--llm-model`).
- - `--hybrid/--no-hybrid`     Enable or disable hybrid BM25 + vector search.
- - `--bm25-index <path>`      Path to JSON BM25 index file.
+ - `--raw`                    Show raw retrieval hits and full answer (requires `--llm-model`).
+ - `--hybrid/--no-hybrid`     Enable hybrid BM25 + vector search (on by default; disable with `--no-hybrid`).
+ - `--bm25-index <path>`      Path to JSON BM25 index file (defaults to `<collection>_bm25_index.json`).
  - `--alpha <float>`          Weight for vector score in fusion (default: 0.5).
  - `--bm25-top <int>`         Number of top BM25 docs (default: same as `k`).
  - `--rrf-k <float>`          RRF hyperparameter (default: 60.0).

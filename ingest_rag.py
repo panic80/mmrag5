@@ -366,6 +366,13 @@ def embed_and_upsert(
 @click.option("--distance", type=click.Choice(["Cosine", "Dot", "Euclid"], case_sensitive=False), default="Cosine", help="Vector distance metric.")
 @click.option("--chunk-size", type=int, default=500, show_default=True, help="Chunk size (characters) for docling chunker.")
 @click.option("--chunk-overlap", type=int, default=50, show_default=True, help="Overlap (characters) between chunks.")
+@click.option(
+    "--bm25-index",
+    type=click.Path(dir_okay=False, writable=True),
+    default=None,
+    help="Path to write BM25 index JSON mapping point IDs to chunk_text."
+         " Defaults to '<collection>_bm25_index.json'.",
+)
 def cli(
     env_file: str,
     source: str,
@@ -379,6 +386,7 @@ def cli(
     distance: str,
     chunk_size: int,
     chunk_overlap: int,
+    bm25_index: str | None,
 ):
     """Ingest *SOURCE* into a Qdrant RAG database using OpenAI embeddings."""
 
@@ -456,6 +464,38 @@ def cli(
     embed_and_upsert(client, collection, documents, openai_client, batch_size=batch_size)
 
     click.secho(f"\n[success] Ingestion completed. Collection '{collection}' now holds the embeddings.", fg="green")
+    # ---------------------------------------------------------------------
+    # Build BM25 index JSON mapping point IDs to chunk_text
+    # ---------------------------------------------------------------------
+    # Determine output path
+    index_path = bm25_index or f"{collection}_bm25_index.json"
+    click.echo(f"[info] Building BM25 index JSON at {index_path}")
+    id2text: dict[str, str] = {}
+    offset = None
+    # Scroll through entire collection to collect chunk_text
+    while True:
+        records, offset = client.scroll(
+            collection_name=collection,
+            scroll_filter=None,
+            limit=1000,
+            offset=offset,
+            with_payload=True,
+        )
+        if not records:
+            break
+        for rec in records:
+            payload = getattr(rec, 'payload', {}) or {}
+            text = payload.get("chunk_text")
+            if isinstance(text, str) and text:
+                id2text[rec.id] = text
+        if offset is None:
+            break
+    try:
+        with open(index_path, "w") as f:
+            json.dump(id2text, f)
+        click.secho(f"[success] BM25 index written to {index_path}", fg="green")
+    except Exception as e:
+        click.echo(f"[warning] Failed to write BM25 index: {e}", err=True)
 
 
 if __name__ == "__main__":

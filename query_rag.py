@@ -17,7 +17,13 @@ from ingest_rag import get_openai_client
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option("--collection", default="rag_data", show_default=True, help="Qdrant collection name to query.")
-@click.option("--k", type=int, default=5, show_default=True, help="Number of nearest neighbors to retrieve.")
+@click.option(
+    "--k",
+    type=int,
+    default=150,
+    show_default=True,
+    help="Number of nearest neighbors to retrieve.",
+)
 @click.option("--snippet/--no-snippet", default=True, help="Show a text snippet of each result.")
 @click.option("--model", default="text-embedding-3-large", show_default=True, help="OpenAI embedding model to use.")
 @click.option("--qdrant-host", default="localhost", show_default=True, help="Qdrant host (ignored if --qdrant-url is provided).")
@@ -36,8 +42,21 @@ from ingest_rag import get_openai_client
 )
 @click.option("--raw", is_flag=True, default=False,
               help="Show raw retrieval and answer (requires --llm-model).")
-@click.option("--hybrid/--no-hybrid", default=False, help="Enable hybrid BM25 + vector search.")
-@click.option("--bm25-index", type=click.Path(exists=True, dir_okay=False), default=None, help="Path to JSON file mapping point IDs to chunk_text for BM25 index.")
+@click.option(
+    "--hybrid/--no-hybrid",
+    default=True,
+    show_default=True,
+    help="Enable hybrid BM25 + vector search (on by default; disable with --no-hybrid).",
+)
+@click.option(
+    "--bm25-index",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help=(
+        "Path to JSON file mapping point IDs to chunk_text for BM25 index. "
+        "Defaults to '<collection>_bm25_index.json' if present."
+    ),
+)
 @click.option("--alpha", type=float, default=0.5, show_default=True, help="Weight for vector scores in hybrid fusion (0.0-1.0).")
 @click.option("--bm25-top", type=int, default=None, help="Number of top BM25 docs to consider (default: k).")
 @click.option("--rrf-k", type=float, default=60.0, show_default=True, help="Reciprocal Rank Fusion k hyperparameter.")
@@ -153,9 +172,18 @@ def main(
             import json
             from rank_bm25 import BM25Okapi
         except ImportError:
-            click.echo("[fatal] rank_bm25 is required for hybrid search (pip install rank_bm25)", err=True)
+            click.echo(
+                "[fatal] rank_bm25 is required for hybrid search (pip install rank-bm25)",
+                err=True,
+            )
             sys.exit(1)
         from qdrant_client.http.models import Filter as QFilter, HasIdCondition
+        # If no BM25 index path provided, try default '<collection>_bm25_index.json'
+        if not bm25_index:
+            default_idx = f"{collection}_bm25_index.json"
+            if os.path.exists(default_idx):
+                bm25_index = default_idx
+                click.echo(f"[info] Loading BM25 index from {bm25_index}")
 
         # Load or build BM25 index mapping point IDs to chunk text
         if bm25_index:
@@ -296,10 +324,6 @@ def main(
         summary = chat_resp.choices[0].message.content  # type: ignore
     click.secho("\n[summary]", fg="green")
     click.echo(summary.strip())
-
-if __name__ == "__main__":  # pragma: no cover
-    main()
-
 
 if __name__ == "__main__":  # pragma: no cover
     main()

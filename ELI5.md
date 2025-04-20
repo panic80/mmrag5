@@ -54,10 +54,10 @@
  ```
 
  ## A few grown‑up options
- - `--hybrid`: mix regular word search with embedding search.
+- `--hybrid`: mix regular word search with embedding search (on by default; disable with `--no-hybrid`).
  - `--bm25-index <file>`: reuse a saved word‑search index.
- - `--llm-model <model>`: specify the LLM to use (default: `gpt-4.1-mini`; set to empty to skip).
- - `--summary`: generate a brief summary & answer from the retrieved chunks (requires `--llm-model`).
+- `--llm-model <model>`: specify the LLM to use (default: `gpt-4.1-mini`; set to empty to skip).
+- `--raw`: show raw retrieval hits and full answer (requires `--llm-model`).
  - `--chunk-size` / `--chunk-overlap`: control how big or overlapping each piece is.
 
  And that’s it! You now have a magic question‑answering box for your documents.
