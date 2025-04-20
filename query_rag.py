@@ -25,7 +25,17 @@ from ingest_rag import get_openai_client
 @click.option("--qdrant-url", help="Full Qdrant URL (overrides host/port).")
 @click.option("--qdrant-api-key", envvar="QDRANT_API_KEY", help="API key for Qdrant (if required).")
 @click.option("--openai-api-key", envvar="OPENAI_API_KEY", help="OpenAI API key.")
-@click.option("--llm-model", default=None, help="LLM model for answer generation (e.g. gpt-4). Omit to skip generation.")
+@click.option(
+    "--llm-model",
+    default="gpt-4.1-mini",
+    show_default=True,
+    help=(
+        "LLM model for answer generation (e.g. gpt-4.1-mini)."
+        " Set to empty string to skip generation."
+    ),
+)
+@click.option("--raw", is_flag=True, default=False,
+              help="Show raw retrieval and answer (requires --llm-model).")
 @click.option("--hybrid/--no-hybrid", default=False, help="Enable hybrid BM25 + vector search.")
 @click.option("--bm25-index", type=click.Path(exists=True, dir_okay=False), default=None, help="Path to JSON file mapping point IDs to chunk_text for BM25 index.")
 @click.option("--alpha", type=float, default=0.5, show_default=True, help="Weight for vector scores in hybrid fusion (0.0-1.0).")
@@ -34,23 +44,24 @@ from ingest_rag import get_openai_client
 @click.option("--filter", "-f", "filters", multiple=True, help="Filter by payload key=value. Can be used multiple times.")
 @click.argument("query", nargs=-1, required=True)
 def main(
-     collection: str,
-     k: int,
-     snippet: bool,
-     model: str,
-     qdrant_host: str,
-     qdrant_port: int,
-     qdrant_url: str | None,
-     qdrant_api_key: str | None,
-     openai_api_key: str | None,
-     llm_model: str | None,
-     hybrid: bool,
-     bm25_index: str | None,
-     alpha: float,
-     bm25_top: int | None,
-     rrf_k: float,
-     filters: Sequence[str],
-     query: Sequence[str],
+    collection: str,
+    k: int,
+    snippet: bool,
+    model: str,
+    qdrant_host: str,
+    qdrant_port: int,
+    qdrant_url: str | None,
+    qdrant_api_key: str | None,
+    openai_api_key: str | None,
+    llm_model: str | None,
+    raw: bool,
+    hybrid: bool,
+    bm25_index: str | None,
+    alpha: float,
+    bm25_top: int | None,
+    rrf_k: float,
+    filters: Sequence[str],
+    query: Sequence[str],
 ) -> None:
     """Embed QUERY with OpenAI and search a Qdrant RAG collection."""
     # Load .env file (if present) BEFORE reading API keys
@@ -228,51 +239,66 @@ def main(
         else:
             click.echo("[warning] No results found for query.", err=True)
         return
-    # Display results
-    for idx, point in enumerate(scored, start=1):
-        # Score formatting
-        score = getattr(point, 'score', None)
-        score_str = f"{score:.4f}" if score is not None else "N/A"
-        # Payload metadata
-        payload: dict[str, Any] = getattr(point, 'payload', {}) or {}
-        click.echo(f"[{idx}] id={point.id}  score={score_str}")
-        for key, val in payload.items():
-            click.echo(f"    {key}: {val}")
-        # Optionally show a snippet of the chunk from stored payload
-        if snippet:
-            snippet_text = str(payload.get("chunk_text", "")).replace("\n", " ")
-            snippet_text = snippet_text[:200].strip()
-            if snippet_text:
-                click.echo(f"    snippet: {snippet_text}…")
-    # If an LLM model is specified, generate an answer using the retrieved chunks as context
-    if llm_model:
-        # Gather context passages (truncated) from stored payloads to fit context window
-        context_chunks: list[str] = []
-        max_ctx_chars = 1000  # limit per chunk
-        for point in scored:
+    # Branch display: raw retrieval + answer or summary-only
+    if raw:
+        # Show raw retrieval hits
+        for idx, point in enumerate(scored, start=1):
+            score = getattr(point, 'score', None)
+            score_str = f"{score:.4f}" if score is not None else "N/A"
             payload: dict[str, Any] = getattr(point, 'payload', {}) or {}
-            text = payload.get("chunk_text")
-            if isinstance(text, str) and text:
-                # replace newlines and truncate
-                snippet = text.replace("\n", " ")[:max_ctx_chars]
-                context_chunks.append(snippet)
-        # Build prompt
-        context = "\n\n---\n\n".join(context_chunks)
-        system_msg = {"role": "system", "content": "You are a helpful assistant."}
-        user_msg = {"role": "user", "content": f"Use the following context to answer the question.\n\nContext:\n{context}\n\nQuestion: {query_text}"}
-        # Call chat completion
-        if hasattr(openai_client, "chat"):
-            chat_resp = openai_client.chat.completions.create(
-                model=llm_model, messages=[system_msg, user_msg]
-            )
-            answer = chat_resp.choices[0].message.content
-        else:
-            chat_resp = openai_client.ChatCompletion.create(
-                model=llm_model, messages=[system_msg, user_msg]
-            )
-            answer = chat_resp.choices[0].message.content  # type: ignore
-        click.secho("\n[answer]", fg="green")
-        click.echo(answer.strip())
+            click.echo(f"[{idx}] id={point.id}  score={score_str}")
+            if snippet:
+                snippet_text = str(payload.get("chunk_text", "")).replace("\n", " ")
+                snippet_text = snippet_text[:200].strip()
+                if snippet_text:
+                    click.echo(f"    snippet: {snippet_text}…")
+        # Generate answer if LLM model is specified
+        if llm_model:
+            # Gather context passages
+            context_chunks: list[str] = []
+            max_ctx_chars = 1000
+            for point in scored:
+                payload: dict[str, Any] = getattr(point, 'payload', {}) or {}
+                text = payload.get("chunk_text")
+                if isinstance(text, str) and text:
+                    snippet = text.replace("\n", " ")[:max_ctx_chars]
+                    context_chunks.append(snippet)
+            context = "\n\n---\n\n".join(context_chunks)
+            system_msg = {"role": "system", "content": "You are a helpful assistant."}
+            user_msg = {"role": "user", "content": f"Use the following context to answer the question.\n\nContext:\n{context}\n\nQuestion: {query_text}"}
+            if hasattr(openai_client, "chat"):
+                chat_resp = openai_client.chat.completions.create(model=llm_model, messages=[system_msg, user_msg])
+                answer = chat_resp.choices[0].message.content
+            else:
+                chat_resp = openai_client.ChatCompletion.create(model=llm_model, messages=[system_msg, user_msg])
+                answer = chat_resp.choices[0].message.content  # type: ignore
+            click.secho("\n[answer]", fg="green")
+            click.echo(answer.strip())
+        return
+    # Default: summary-only
+    # Generate brief summary using LLM
+    context_chunks: list[str] = []
+    max_ctx_chars = 1000
+    for point in scored:
+        payload: dict[str, Any] = getattr(point, 'payload', {}) or {}
+        text = payload.get("chunk_text")
+        if isinstance(text, str) and text:
+            snippet = text.replace("\n", " ")[:max_ctx_chars]
+            context_chunks.append(snippet)
+    context = "\n\n---\n\n".join(context_chunks)
+    system_msg = {"role": "system", "content": "You are a helpful assistant."}
+    user_msg = {"role": "user", "content": f"Provide a brief summary of the following context relative to the question.\n\nContext:\n{context}\n\nQuestion: {query_text}"}
+    if hasattr(openai_client, "chat"):
+        chat_resp = openai_client.chat.completions.create(model=llm_model, messages=[system_msg, user_msg])
+        summary = chat_resp.choices[0].message.content
+    else:
+        chat_resp = openai_client.ChatCompletion.create(model=llm_model, messages=[system_msg, user_msg])
+        summary = chat_resp.choices[0].message.content  # type: ignore
+    click.secho("\n[summary]", fg="green")
+    click.echo(summary.strip())
+
+if __name__ == "__main__":  # pragma: no cover
+    main()
 
 
 if __name__ == "__main__":  # pragma: no cover
