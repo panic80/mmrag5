@@ -8,11 +8,13 @@ app = Flask(__name__)
 def health():
     return jsonify({"status": "ok"})
 
-@app.route("/inject", methods=["GET", "POST"])
+@app.route("/inject",  methods=["GET", "POST"])
 @app.route("/inject/", methods=["GET", "POST"])
-@app.route("/ask", methods=["GET", "POST"])
-@app.route("/ask/", methods=["GET", "POST"])
-@app.route("/", methods=["GET", "POST"])
+@app.route("/injest",  methods=["GET", "POST"])
+@app.route("/injest/", methods=["GET", "POST"])
+@app.route("/ask",     methods=["GET", "POST"])
+@app.route("/ask/",   methods=["GET", "POST"])
+@app.route("/",        methods=["GET", "POST"])
 def handle_slash():
     try:
         # Mattermost will send either GET?text=... or POST form text=...
@@ -33,7 +35,8 @@ def handle_slash():
         generic_token = os.environ.get("SLASH_TOKEN")
         inject_token = os.environ.get("SLASH_TOKEN_INJECT", generic_token)
         ask_token = os.environ.get("SLASH_TOKEN_ASK", generic_token)
-        if cmd_name == "inject":
+        # Pick the expected token; alias 'injest' to same as 'inject'
+        if cmd_name in ("inject", "injest"):
             expected_token = inject_token
         elif cmd_name == "ask":
             expected_token = ask_token
@@ -61,24 +64,55 @@ def handle_slash():
             return answer, 200, {"Content-Type": "text/plain"}
 
         # 'inject' ingests the current channel into the RAG collection
-        elif cmd_name == "inject":
+        elif cmd_name in ("inject", "injest"):
             import shlex
             import requests
             import uuid
-            from ingest_rag import chunk_text, iter_batches, get_openai_client
+            # Re‑use the helper utilities from ingest_rag.  We purposefully do
+            # *not* import the local `chunk_text` helper anymore – all
+            # extraction / chunking is now delegated to docling via
+            # ingest_rag.load_documents().
+            from ingest_rag import get_openai_client, load_documents, embed_and_upsert, chunk_text as _legacy_chunk_text
             from qdrant_client import QdrantClient
 
-            # Parse optional collection override
+            # Parse optional collection override; remaining args become sources
             args = shlex.split(text or "")
             collection = "rag_data"
             if "--collection" in args:
                 idx = args.index("--collection")
                 if idx + 1 < len(args):
                     collection = args[idx + 1]
+                # remove the flag and its value
+                args.pop(idx)
+                args.pop(idx)
             elif "-c" in args:
                 idx = args.index("-c")
                 if idx + 1 < len(args):
                     collection = args[idx + 1]
+                args.pop(idx)
+                args.pop(idx)
+
+            # If sources (e.g. URLs or paths) were provided, ingest them instead of channel
+            if args:
+                # Initialize OpenAI and Qdrant clients
+                openai_api_key = os.environ.get("OPENAI_API_KEY")
+                if not openai_api_key:
+                    return jsonify({"text": "Error: OPENAI_API_KEY not set."}), 200
+                qdrant_url_env = os.environ.get("QDRANT_URL", "http://localhost:6333")
+                qdrant_api_key = os.environ.get("QDRANT_API_KEY")
+                openai_client = get_openai_client(openai_api_key)
+                client = QdrantClient(url=qdrant_url_env, api_key=qdrant_api_key)
+
+                total_chunks = 0
+                for source in args:
+                    # Load documents from URL or path
+                    docs = load_documents(source, chunk_size=500)
+                    count = len(docs)
+                    total_chunks += count
+                    # Embed and upsert
+                    embed_and_upsert(client, collection, docs, openai_client, batch_size=64)
+
+                return f"Ingested {total_chunks} chunks from {len(args)} source(s) into '{collection}'.", 200, {"Content-Type": "text/plain"}
 
             # Mattermost API settings
             mattermost_url = os.environ.get("MATTERMOST_URL")
@@ -115,12 +149,67 @@ def handle_slash():
             if not messages:
                 return "No messages to ingest.", 200, {"Content-Type": "text/plain"}
 
-            # Chunk messages and prepare documents
-            docs: list[tuple[str, dict]] = []
-            for msg_idx, msg in enumerate(messages):
-                chunks = chunk_text(msg, max_chars=500)
-                for chunk_idx, chunk in enumerate(chunks):
-                    docs.append((chunk, {"source_channel": channel_id, "message_index": msg_idx, "chunk_index": chunk_idx}))
+            # ------------------------------------------------------------------
+            # Use *docling* for extraction & chunking of the channel transcript
+            # ------------------------------------------------------------------
+
+            # Write the full channel transcript to a temporary .txt file so that
+            # the existing `ingest_rag.load_documents()` helper – which relies
+            # on docling for rich extraction / chunking – can be reused without
+            # duplicating its logic here.
+
+            import tempfile
+
+            with tempfile.NamedTemporaryFile(mode="w+", suffix=".txt", delete=False) as tmp_file:
+                tmp_path = tmp_file.name
+                # Concatenate all messages with a newline so that the transcript
+                # roughly resembles a plain‑text document.  The message index is
+                # preserved later via metadata on each chunk.
+                for line in messages:
+                    tmp_file.write(line.rstrip("\n") + "\n")
+
+            # Leverage the high‑level loader which delegates to docling when
+            # available (and gracefully falls back to a whitespace splitter
+            # otherwise).  This keeps the /inject endpoint behaviour aligned
+            # with the standalone *ingest_rag* CLI.
+            from ingest_rag import load_documents, Document
+
+            try:
+                try:
+                    docs_temp = load_documents(tmp_path, chunk_size=500, overlap=50)
+                except BaseException:  # pragma: no cover – docling may be missing
+                    # Fallback: simple whitespace chunking (legacy behaviour)
+                    from ingest_rag import chunk_text as _legacy_chunk_text
+
+                    docs_temp = []
+                    for idx, chunk in enumerate(_legacy_chunk_text(
+                        open(tmp_path, "r", encoding="utf-8", errors="ignore").read(),
+                        max_chars=500,
+                    )):
+                        docs_temp.append(Document(content=chunk, metadata={"chunk_index": idx}))
+            finally:
+                # Clean up the temporary file regardless of success/failure.
+                import os as _os
+                try:
+                    _os.remove(tmp_path)
+                except FileNotFoundError:
+                    pass
+
+            # Enrich every generated Document with Mattermost‑specific metadata
+            # (channel id + dummy message/chunk indexes when available).
+            docs_list: list[Document] = []
+            for global_idx, doc in enumerate(docs_temp):
+                meta = doc.metadata.copy()
+                meta.setdefault("source_channel", channel_id)
+                # Best‑effort mapping of chunk to original message: we store the
+                # *approximate* message index via integer division assuming a
+                # 1‑to‑1 mapping between input messages and chunks – this is
+                # mainly for traceability and is not guaranteed to be exact
+                # when docling merges/splits lines differently.  The original
+                # (docling‑generated) metadata is preserved.
+                meta.setdefault("message_index", global_idx)
+                meta.setdefault("chunk_index", 0)  # docling already indexes its chunks
+                docs_list.append(Document(content=doc.content, metadata=meta))
 
             # Initialize OpenAI and Qdrant clients
             openai_api_key = os.environ.get("OPENAI_API_KEY")
@@ -131,32 +220,14 @@ def handle_slash():
             openai_client = get_openai_client(openai_api_key)
             client = QdrantClient(url=qdrant_url_env, api_key=qdrant_api_key)
 
-            # Embed and upsert in batches
-            batch_size = 64
-            total_chunks = len(docs)
-            for batch in iter_batches(docs, batch_size):
-                texts = [doc for doc, _ in batch]
-                # Create embeddings
-                try:
-                    if hasattr(openai_client, "embeddings"):
-                        emb_resp = openai_client.embeddings.create(model="text-embedding-3-large", input=texts)
-                        vectors = [d.embedding for d in emb_resp.data]
-                    else:
-                        emb_resp = openai_client.Embedding.create(model="text-embedding-3-large", input=texts)
-                        vectors = [d["data"][0]["embedding"] for d in emb_resp.data]
-                except Exception as e:
-                    return jsonify({"text": f"Error during embedding: {e}"}), 200
-                points = []
-                for (chunk_text_val, meta), vec in zip(batch, vectors):
-                    payload = meta.copy()
-                    payload["chunk_text"] = chunk_text_val
-                    points.append({"id": str(uuid.uuid4()), "vector": vec, "payload": payload})
-                try:
-                    client.upsert(collection_name=collection, points=points)
-                except Exception as e:
-                    return jsonify({"text": f"Error during upsert: {e}"}), 200
+            # Embed and upsert all chunks
+            embed_and_upsert(client, collection, docs_list, openai_client, batch_size=64)
 
-            return f"Ingested {total_chunks} chunks from {len(messages)} messages into '{collection}'.", 200, {"Content-Type": "text/plain"}
+            return (
+                f"Ingested {len(docs_list)} chunks from {len(messages)} messages into '{collection}'.",
+                200,
+                {"Content-Type": "text/plain"},
+            )
 
             # Unknown command
             return jsonify({"text": f"Unknown command '{trigger}'."}), 200
