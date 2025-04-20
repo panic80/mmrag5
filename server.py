@@ -1,6 +1,8 @@
 import os
 import subprocess
+import threading
 from flask import Flask, request, jsonify
+import requests
 
 app = Flask(__name__)
 
@@ -24,6 +26,12 @@ def handle_slash():
             text = request.form.get("text", "")
         # DEBUG: log incoming request values for debugging trigger and params
         app.logger.info(f"Slash command hit: path={request.path}, values={request.values.to_dict()}, form={request.form.to_dict()}")
+        # Context for asynchronous replies
+        response_url = request.values.get("response_url")  # Slack-style callback URL
+        channel_id = request.values.get("channel_id")      # Mattermost channel ID
+        mattermost_url = os.environ.get("MATTERMOST_URL")  # e.g. https://your-mattermost-server
+        mattermost_token = os.environ.get("MATTERMOST_TOKEN")
+        # (Using Personal Access Token for Mattermost REST API)
 
         # Determine which slash command was invoked and validate its token
         trigger = request.values.get("command") or request.values.get("trigger_word") or ""
@@ -50,117 +58,218 @@ def handle_slash():
             if not text:
                 return jsonify({"text": "No text provided."}), 400
             import shlex
+            # Build command
             args = shlex.split(text)
             cmd = ["python3", "-m", "query_rag"]
             qdrant_url = os.environ.get("QDRANT_URL")
             if qdrant_url and not any(arg.startswith("--qdrant-url") for arg in args):
                 cmd += ["--qdrant-url", qdrant_url]
             cmd += args
-            try:
-                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-                answer = result.stdout.strip()
-            except subprocess.CalledProcessError as e:
-                return jsonify({"error": e.stderr.strip()}), 500
-            return answer, 200, {"Content-Type": "text/plain"}
+            # Asynchronous execution
+            def run_and_post():
+                # Launch the query subprocess and stream output back to Mattermost
+                try:
+                    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                except Exception as e:
+                    error_msg = f"Failed to start query: {e}"
+                    try:
+                        if mattermost_url and mattermost_token and channel_id:
+                            headers = {"Authorization": f"Bearer {mattermost_token}"}
+                            requests.post(
+                                f"{mattermost_url}/api/v4/posts",
+                                headers=headers,
+                                json={"channel_id": channel_id, "message": error_msg},
+                            )
+                        else:
+                            app.logger.error("Missing Mattermost URL/token/channel_id for posting error message")
+                    except Exception:
+                        app.logger.exception("Failed to post error message")
+                    return
+
+                # Stream subprocess output line by line
+                if proc.stdout:
+                    for raw_line in proc.stdout:
+                        line = raw_line.rstrip()
+                        try:
+                            if mattermost_url and mattermost_token and channel_id:
+                                headers = {"Authorization": f"Bearer {mattermost_token}"}
+                                requests.post(
+                                    f"{mattermost_url}/api/v4/posts",
+                                    headers=headers,
+                                    json={"channel_id": channel_id, "message": line},
+                                )
+                            else:
+                                app.logger.error("Missing Mattermost URL/token/channel_id for posting progress")
+                        except Exception:
+                            app.logger.exception("Failed to post query output line")
+                # Wait for process to exit and report non-zero exit code if any
+                retcode = proc.wait()
+                if retcode != 0:
+                    error_msg = f"Query process exited with code {retcode}"
+                    try:
+                        if mattermost_url and mattermost_token and channel_id:
+                            headers = {"Authorization": f"Bearer {mattermost_token}"}
+                            requests.post(
+                                f"{mattermost_url}/api/v4/posts",
+                                headers=headers,
+                                json={"channel_id": channel_id, "message": error_msg},
+                            )
+                        else:
+                            app.logger.error("Missing Mattermost URL/token/channel_id for posting error code")
+                    except Exception:
+                        app.logger.exception("Failed to post exit code message")
+            # Always run asynchronously
+            threading.Thread(target=run_and_post, daemon=True).start()
+            # Immediate acknowledgement
+            return jsonify({"text": "Processing your query..."}), 200
 
         # 'inject' ingests the current channel into the RAG collection
         elif cmd_name in ("inject", "injest"):
             import shlex
-            import requests
-            import uuid
-            # Re‑use helper utilities and collection management from ingest_rag
-            from ingest_rag import get_openai_client, load_documents, embed_and_upsert, chunk_text as _legacy_chunk_text, ensure_collection
-            from qdrant_client import QdrantClient
+            def run_inject():
+                import requests
+                import uuid
+                import os
+                import tempfile
+                import urllib.parse
+                from ingest_rag import get_openai_client, load_documents, embed_and_upsert, ensure_collection
+                from qdrant_client import QdrantClient
 
-            # Parse optional collection override; remaining args become sources
-            args = shlex.split(text or "")
-            # Detect --purge to clear and recreate the entire collection
-            purge = False
-            if "--purge" in args:
-                purge = True
-                args = [a for a in args if a != "--purge"]
-            collection = "rag_data"
-            if "--collection" in args:
-                idx = args.index("--collection")
-                if idx + 1 < len(args):
-                    collection = args[idx + 1]
-                # remove the flag and its value
-                args.pop(idx)
-                args.pop(idx)
-            elif "-c" in args:
-                idx = args.index("-c")
-                if idx + 1 < len(args):
-                    collection = args[idx + 1]
-                args.pop(idx)
-                args.pop(idx)
-
-            # If sources (e.g. URLs or paths) were provided, ingest them instead of channel
-            if args:
-                # Initialize OpenAI and Qdrant clients
-                openai_api_key = os.environ.get("OPENAI_API_KEY")
-                if not openai_api_key:
-                    return jsonify({"text": "Error: OPENAI_API_KEY not set."}), 200
-                qdrant_url_env = os.environ.get("QDRANT_URL", "http://localhost:6333")
-                qdrant_api_key = os.environ.get("QDRANT_API_KEY")
-                openai_client = get_openai_client(openai_api_key)
-                client = QdrantClient(url=qdrant_url_env, api_key=qdrant_api_key)
-                # Purge existing collection if requested
-                if purge:
+                # Helper to post messages (Slack via response_url or Mattermost via REST API)
+                def post(msg: str):
                     try:
+                        if response_url:
+                            requests.post(
+                                response_url,
+                                json={"response_type": "in_channel", "text": msg},
+                            )
+                        elif mattermost_url and mattermost_token and channel_id:
+                            hdr = {"Authorization": f"Bearer {mattermost_token}"}
+                            requests.post(
+                                f"{mattermost_url}/api/v4/posts",
+                                headers=hdr,
+                                json={"channel_id": channel_id, "message": msg},
+                            )
+                        else:
+                            app.logger.error("No callback available to post message: %s", msg)
+                    except Exception:
+                        app.logger.exception("Failed to post message: %s", msg)
+
+                try:
+                    args = shlex.split(text or "")
+                    purge = False
+                    if "--purge" in args:
+                        purge = True
+                        args = [a for a in args if a != "--purge"]
+                    collection = "rag_data"
+                    # Handle collection override
+                    if "--collection" in args:
+                        idx = args.index("--collection")
+                        if idx + 1 < len(args):
+                            collection = args[idx + 1]
+                        args.pop(idx); args.pop(idx)
+                    elif "-c" in args:
+                        idx = args.index("-c")
+                        if idx + 1 < len(args):
+                            collection = args[idx + 1]
+                        args.pop(idx); args.pop(idx)
+
+                    # Initialize Qdrant & OpenAI clients
+                    openai_api_key = os.environ.get("OPENAI_API_KEY")
+                    qdrant_url_env = os.environ.get("QDRANT_URL", "http://localhost:6333")
+                    qdrant_api_key = os.environ.get("QDRANT_API_KEY")
+                    openai_client = get_openai_client(openai_api_key)
+                    client = QdrantClient(url=qdrant_url_env, api_key=qdrant_api_key)
+
+                    # Handle purge or ensure collection
+                    if purge:
                         client.delete_collection(collection_name=collection)
-                    except Exception as e:
-                        return jsonify({"text": f"❌ Failed to purge collection '{collection}': {e}"}), 200
-                    try:
                         ensure_collection(client, collection, vector_size=3072)
-                    except Exception as e:
-                        return jsonify({"text": f"❌ Failed to recreate collection '{collection}': {e}"}), 200
+                    else:
+                        ensure_collection(client, collection, vector_size=3072)
 
-                total_chunks = 0
-                # Helper imports for URL-based downloads
-                import tempfile, urllib.parse
-                for source in args:
-                    local_source = source
-                    # If source is a remote URL and looks like a PDF, download it first
-                    if source.lower().startswith(("http://", "https://")):
-                        parsed = urllib.parse.urlparse(source)
-                        ext = os.path.splitext(parsed.path)[1].lower()
-                        if ext == ".pdf":
-                            # Download PDF to temporary file
-                            tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
-                            tmp_path = tmp_file.name
-                            tmp_file.close()
-                            try:
-                                resp = requests.get(source, stream=True, timeout=60)
-                                resp.raise_for_status()
-                                with open(tmp_path, "wb") as f:
-                                    for chunk in resp.iter_content(chunk_size=8192):
-                                        f.write(chunk)
-                                local_source = tmp_path
-                            except Exception as e:
-                                # Cleanup on failure
+                    # When no sources provided, ingest current channel
+                    if not args:
+                        # Fetch channel messages
+                        msgs: list[str] = []
+                        hdrs = {"Authorization": f"Bearer {mattermost_token}"} if mattermost_token else {}
+                        per_page = 200; page = 0
+                        while True:
+                            resp_ct = requests.get(
+                                f"{mattermost_url}/api/v4/channels/{channel_id}/posts",
+                                params={"page": page, "per_page": per_page},
+                                headers=hdrs,
+                            )
+                            if resp_ct.status_code != 200:
+                                post(f"❌ Error fetching posts: {resp_ct.status_code} {resp_ct.text}")
+                                return
+                            data_ct = resp_ct.json()
+                            posts = data_ct.get("posts", {}); order = data_ct.get("order", [])
+                            if not order:
+                                break
+                            for pid in order:
+                                p = posts.get(pid)
+                                if p and p.get("message"):
+                                    msgs.append(p["message"])
+                            if len(order) < per_page:
+                                break
+                            page += 1
+                        if not msgs:
+                            post("No messages to ingest.")
+                            return
+                        # Write transcript to temp file and chunk
+                        tmpf = tempfile.NamedTemporaryFile(mode="w+", suffix=".txt", delete=False)
+                        for line in msgs:
+                            tmpf.write(line.rstrip("\n") + "\n")
+                        tmp_path = tmpf.name; tmpf.close()
+                        docs = load_documents(tmp_path, chunk_size=500)
+                        total_chunks = len(docs)
+                        post(f"Chunked channel into {total_chunks} chunks. Beginning embedding...")
+                        embed_and_upsert(client, collection, docs, openai_client, batch_size=64, deterministic_id=True)
+                        post(f"Ingested {total_chunks} chunks from {len(msgs)} messages into '{collection}'.")
+                        return
+
+                    # Ingest provided sources
+                    total_sources = len(args)
+                    post(f"Starting ingestion of {total_sources} source(s) into '{collection}'...")
+                    total_chunks = 0
+                    for idx, source in enumerate(args, start=1):
+                        local_src = source
+                        # Download PDF if needed
+                        if source.lower().startswith(("http://", "https://")):
+                            parsed = urllib.parse.urlparse(source)
+                            ext = os.path.splitext(parsed.path)[1].lower()
+                            if ext == ".pdf":
+                                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
+                                tmp_path = tmp.name; tmp.close()
                                 try:
-                                    os.remove(tmp_path)
-                                except Exception:
-                                    pass
-                                return jsonify({"text": f"❌ Failed to download {source}: {e}"}), 200
-                    # Load documents from local file or other source via docling
-                    docs = load_documents(local_source, chunk_size=500)
-                    count = len(docs)
-                    total_chunks += count
-                    # Embed and upsert
-                    embed_and_upsert(client, collection, docs, openai_client, batch_size=64, deterministic_id=True)
-                    # Clean up temporary file if downloaded
-                    if local_source != source:
-                        try:
-                            os.remove(local_source)
-                        except Exception:
-                            pass
-
-                return f"Ingested {total_chunks} chunks from {len(args)} source(s) into '{collection}'.", 200, {"Content-Type": "text/plain"}
-
-            # Mattermost API settings
-            mattermost_url = os.environ.get("MATTERMOST_URL")
-            mattermost_token = os.environ.get("MATTERMOST_TOKEN")
+                                    resp = requests.get(source, stream=True, timeout=60)
+                                    resp.raise_for_status()
+                                    with open(tmp_path, "wb") as f:
+                                        for chunk in resp.iter_content(chunk_size=8192): f.write(chunk)
+                                    local_src = tmp_path
+                                except Exception as e:
+                                    post(f"❌ Download failed: {e}")
+                                    return
+                        # Load, embed, upsert
+                        docs = load_documents(local_src, chunk_size=500)
+                        cnt = len(docs); total_chunks += cnt
+                        embed_and_upsert(client, collection, docs, openai_client, batch_size=64, deterministic_id=True)
+                        post(f"[{idx}/{total_sources}] Processed {cnt} chunks from '{source}'. Total: {total_chunks} chunks.")
+                        # Cleanup temp PDF
+                        if local_src != source:
+                            try: os.remove(local_src)
+                            except: pass
+                    post(f"Ingested {total_chunks} chunks from {total_sources} source(s) into '{collection}'.")
+                except Exception as e:
+                    post(f"❌ Ingestion failed: {e}")
+            # Launch ingestion thread and immediately acknowledge
+            threading.Thread(target=run_inject, daemon=True).start()
+            return jsonify({"text": "Ingestion started... progress will be posted shortly."}), 200
+            # Launch ingestion thread and immediately acknowledge
+            threading.Thread(target=run_inject, daemon=True).start()
+            return jsonify({"text": "Ingestion started... progress will be posted shortly."}), 200
+            # (synchronous fallback removed)
             if not mattermost_url or not mattermost_token:
                 return jsonify({"text": "Error: MATTERMOST_URL and MATTERMOST_TOKEN must be set."}), 200
 
