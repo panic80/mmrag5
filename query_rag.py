@@ -213,50 +213,71 @@ def main(
                         id2text[rec.id] = text
                 if offset is None:
                     break
-        ids = list(id2text.keys())
-        tokenized = [id2text[_id].split() for _id in ids]
-        bm25 = BM25Okapi(tokenized)
-        # Compute BM25 rankings
-        query_tokens = query_text.split()
-        bm25_scores = bm25.get_scores(query_tokens)
-        top_n = bm25_top or k
-        bm25_sorted = sorted(enumerate(bm25_scores), key=lambda x: x[1], reverse=True)[:top_n]
-        bm25_rank = {ids[idx]: rank + 1 for rank, (idx, _) in enumerate(bm25_sorted)}
+        # Guard against empty corpus – rank_bm25 crashes with ZeroDivisionError
+        if not id2text:
+            click.echo(
+                "[warning] No documents with 'chunk_text' payload – skipping BM25 component of hybrid search.",
+                err=True,
+            )
+        else:
+            ids = list(id2text.keys())
+            tokenized = [id2text[_id].split() for _id in ids]
+            # rank_bm25 expects at least one document; otherwise it raises ZeroDivisionError
+            if not tokenized:
+                click.echo(
+                    "[warning] BM25 tokenization produced an empty corpus – skipping BM25 component of hybrid search.",
+                    err=True,
+                )
+            else:
+                bm25 = BM25Okapi(tokenized)
+                # Compute BM25 rankings
+                query_tokens = query_text.split()
+                bm25_scores = bm25.get_scores(query_tokens)
+                top_n = bm25_top or k
+                bm25_sorted = sorted(enumerate(bm25_scores), key=lambda x: x[1], reverse=True)[:top_n]
+                bm25_rank = {ids[idx]: rank + 1 for rank, (idx, _) in enumerate(bm25_sorted)}
 
-        # Vector rankings (from initial Qdrant results)
-        vec_rank = {point.id: rank for rank, point in enumerate(scored, start=1)}
+                # Vector rankings (from initial Qdrant results)
+                vec_rank = {point.id: rank for rank, point in enumerate(scored, start=1)}
 
-        # Reciprocal Rank Fusion
-        fused_scores: dict[str, float] = {}
-        for pid in set(vec_rank) | set(bm25_rank):
-            score_h = 0.0
-            if pid in vec_rank:
-                score_h += alpha * (1.0 / (rrf_k + vec_rank[pid]))
-            if pid in bm25_rank:
-                score_h += (1.0 - alpha) * (1.0 / (rrf_k + bm25_rank[pid]))
-            fused_scores[pid] = score_h
+                # Reciprocal Rank Fusion
+                fused_scores: dict[str, float] = {}
+                for pid in set(vec_rank) | set(bm25_rank):
+                    score_h = 0.0
+                    if pid in vec_rank:
+                        score_h += alpha * (1.0 / (rrf_k + vec_rank[pid]))
+                    if pid in bm25_rank:
+                        score_h += (1.0 - alpha) * (1.0 / (rrf_k + bm25_rank[pid]))
+                    fused_scores[pid] = score_h
 
-        # Select top-k fused results
-        fused_ids = [pid for pid, _ in sorted(fused_scores.items(), key=lambda kv: kv[1], reverse=True)][:k]
+                # Select top-k fused results
+                fused_ids = [pid for pid, _ in sorted(fused_scores.items(), key=lambda kv: kv[1], reverse=True)][:k]
 
-        # Build new scored list with payload lookup
-        from types import SimpleNamespace
-        payload_map = {point.id: getattr(point, 'payload', {}) or {} for point in scored}
-        # Fetch any BM25-only payloads
-        for pid in fused_ids:
-            if pid not in payload_map:
-                fobj = QFilter(must=[HasIdCondition(has_id=[pid])])
-                records, _ = client.scroll(collection_name=collection, scroll_filter=fobj, with_payload=True, limit=1)
-                if records:
-                    rec = records[0]
-                    payload_map[pid] = getattr(rec, 'payload', {}) or {}
-                else:
-                    payload_map[pid] = {}
-        # Replace scored with fused SimpleNamespace objects
-        scored = [
-            SimpleNamespace(id=pid, payload=payload_map.get(pid, {}), score=fused_scores.get(pid, 0.0))
-            for pid in fused_ids
-        ]
+                # Build new scored list with payload lookup
+                from types import SimpleNamespace
+                payload_map = {point.id: getattr(point, 'payload', {}) or {} for point in scored}
+                # Fetch any BM25-only payloads
+                for pid in fused_ids:
+                    if pid not in payload_map:
+                        fobj = QFilter(must=[HasIdCondition(has_id=[pid])])
+                        records, _ = client.scroll(collection_name=collection, scroll_filter=fobj, with_payload=True, limit=1)
+                        if records:
+                            rec = records[0]
+                            payload_map[pid] = getattr(rec, 'payload', {}) or {}
+                        else:
+                            payload_map[pid] = {}
+                # Replace scored with fused SimpleNamespace objects
+                scored = [
+                    SimpleNamespace(id=pid, payload=payload_map.get(pid, {}), score=fused_scores.get(pid, 0.0))
+                    for pid in fused_ids
+                ]
+
+        # If BM25 fusion skipped because of empty corpus, keep original 'scored'
+
+        # Note: if no BM25 corpus was available, we simply keep the original
+        # `scored` list coming from the pure‑vector Qdrant search so that the
+        # rest of the pipeline (answer generation, summaries, etc.) continues
+        # to function as expected.
 
     # Handle no matches
     if not scored:

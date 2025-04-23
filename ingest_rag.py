@@ -132,58 +132,6 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50) -> Lis
     attempt to locate a reasonable textual representation for embedding.
     """
 
-    # If source is a URL, try docling extract+chunk; fallback to BeautifulSoup on error
-    if source.lower().startswith(("http://", "https://")):
-        # Fetch HTML: try requests, fallback to urllib
-        try:
-            import requests
-            resp = requests.get(source)
-            resp.raise_for_status()
-            html = resp.text
-        except ImportError:
-            from urllib.request import urlopen, Request
-            try:
-                req = Request(source, headers={"User-Agent": "Mozilla/5.0"})
-                with urlopen(req) as res:
-                    data = res.read()
-                html = data.decode('utf-8', errors='replace')
-            except Exception as e:
-                click.echo(f"[fatal] Failed to fetch URL: {source} ({e})", err=True)
-                sys.exit(1)
-        except Exception as e:
-            click.echo(f"[fatal] Failed to fetch URL: {source} ({e})", err=True)
-            sys.exit(1)
-        # Parse HTML via BeautifulSoup and chunk text
-        bs4 = _lazy_import("bs4")
-        soup = bs4.BeautifulSoup(html, "html.parser")
-        for tag in soup(["script", "style"]):
-            tag.extract()
-        full_text = soup.get_text(separator="\n")
-        text_chunks = chunk_text(full_text, chunk_size)
-        documents: list[Document] = []
-        for idx, chunk in enumerate(text_chunks):
-            meta = {"url": source, "chunk_index": idx}
-            documents.append(Document(content=chunk, metadata=meta))
-        return documents
-    # If source is a local PDF file, extract text via pdfminer.six
-    if source.lower().endswith(".pdf") and os.path.isfile(source):
-        try:
-            from pdfminer.high_level import extract_text
-        except ImportError:
-            click.echo(
-                "[fatal] The Python package 'pdfminer.six' is required for PDF extraction."
-                " Install it with: pip install pdfminer.six",
-                err=True,
-            )
-            sys.exit(1)
-        # Extract text and chunk
-        text = extract_text(source)
-        text_chunks = chunk_text(text, chunk_size)
-        documents: list[Document] = []
-        for idx, chunk in enumerate(text_chunks):
-            meta = {"path": source, "chunk_index": idx}
-            documents.append(Document(content=chunk, metadata=meta))
-        return documents
     # Otherwise, attempt to use docling extract + chunk pipeline for local files
     try:
         # Use new docling modules; fall back to core package
@@ -217,30 +165,62 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50) -> Lis
         click.echo(f"[warning] docling extract/chunk pipeline failed: {e}", err=True)
         click.echo("[warning] Falling back to legacy docling loader...", err=True)
     # Otherwise, delegate to legacy docling if available
-    docling = _lazy_import("docling")
+    try:
+        docling = _lazy_import("docling")
+    except SystemExit:
+        # docling not installed – fall back to naïve whitespace chunking of the
+        # entire file.  This avoids a hard dependency on docling when the user
+        # simply wants to ingest a plain‑text transcript.
+        try:
+            with open(source, "r", encoding="utf-8", errors="replace") as fh:
+                full_text = fh.read()
+        except Exception as e:
+            click.echo(f"[fatal] Could not read source '{source}': {e}", err=True)
+            sys.exit(1)
 
-    # Try old docling API: load()
+        text_chunks = chunk_text(full_text, chunk_size)
+        return [
+            Document(content=chunk, metadata={"source": source, "chunk_index": idx})
+            for idx, chunk in enumerate(text_chunks)
+        ]
+
+    # Try old docling API: load() (pass chunk_size and overlap if supported)
     if hasattr(docling, "load"):
-        dataset = docling.load(source)  # type: ignore[attr-defined]
+        try:
+            dataset = docling.load(source, chunk_size=chunk_size, overlap=overlap)  # type: ignore[attr-defined]
+        except TypeError:
+            dataset = docling.load(source)  # type: ignore[attr-defined]
     # Try legacy API: DocumentSet
     elif hasattr(docling, "DocumentSet"):
         dataset = docling.DocumentSet(source)  # type: ignore
     # Try new API in submodule: DocumentConverter
     else:
+        # Try new API in submodule: DocumentConverter, fallback to plain-text on failure
         try:
             dc_mod = __import__("docling.document_converter", fromlist=["DocumentConverter"])
             converter = dc_mod.DocumentConverter()
             conv_res = converter.convert(source)
+            # Extract textual content from the converted document
+            doc_obj = conv_res.document
+            if hasattr(doc_obj, "export_to_text") and callable(doc_obj.export_to_text):
+                text = doc_obj.export_to_text()
+            else:
+                text = str(doc_obj)
+            # Return single-chunk document
+            return [Document(content=text, metadata={"source": source, "chunk_index": 0})]
         except Exception as e:
-            click.echo(f"[fatal] Failed to load via docling.document_converter: {e}", err=True)
-            sys.exit(1)
-        # Extract textual content from the converted document
-        doc_obj = conv_res.document
-        if hasattr(doc_obj, "export_to_text") and callable(doc_obj.export_to_text):
-            text = doc_obj.export_to_text()
-        else:
-            text = str(doc_obj)
-        return [Document(content=text, metadata={"source": source})]
+            # Fallback: treat as plain-text, naive whitespace chunking
+            click.echo(f"[warning] docling.document_converter failed for '{source}': {e}. Falling back to plain-text chunking.", err=True)
+            try:
+                with open(source, "r", encoding="utf-8", errors="replace") as fh:
+                    full_text = fh.read()
+            except Exception as e2:
+                click.echo(f"[fatal] Could not read source '{source}': {e2}", err=True)
+                sys.exit(1)
+            # Split on whitespace into chunks
+            text_chunks = chunk_text(full_text, chunk_size)
+            return [Document(content=chunk, metadata={"source": source, "chunk_index": idx})
+                    for idx, chunk in enumerate(text_chunks)]
 
     documents: list[Document] = []
 

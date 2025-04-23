@@ -8,7 +8,8 @@ beautifulsoup4>=4.9
 requests>=2.0
 # Environment variable support
 python-dotenv>=0.19
-# Document ingestion (docling-core extract, chunk & PDF parsing)
+# Document ingestion (docling extract & chunk from docling-project; docling-core fallback, PDF parsing)
+git+https://github.com/docling-project/docling.git#egg=docling
 docling-core>=2.27
 pdfminer.six>=20201018
 rank-bm25>=0.2.2

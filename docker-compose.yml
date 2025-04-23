@@ -7,7 +7,9 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: dockerfile
     # If your app listens on 5000, map it here:
     ports:
       - "5000:5000"
