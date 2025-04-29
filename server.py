@@ -185,8 +185,15 @@ def handle_slash():
 
                     # Handle purge or ensure collection
                     if purge:
-                        client.delete_collection(collection_name=collection)
+                        try:
+                            client.delete_collection(collection_name=collection)
+                            post(f"✅ Purged existing collection '{collection}'.")
+                        except Exception as e:
+                            post(f"⚠️ Purge skipped: collection '{collection}' may not exist. ({e})")
+                        # Recreate empty collection
                         ensure_collection(client, collection, vector_size=3072)
+                        # Purge-only: do not proceed to re-ingest
+                        return
                     else:
                         ensure_collection(client, collection, vector_size=3072)
 
@@ -343,9 +350,19 @@ def handle_slash():
                 except BaseException as e:
                     # Catch SystemExit raised by _lazy_import as well as regular exceptions
                     post(f"❌ Ingestion failed: {e}")
+            # Parse flags early for immediate ack
+            import shlex
+            args = shlex.split(text or "")
+            purge_flag = "--purge" in args
             # Launch ingestion thread and immediately acknowledge
             threading.Thread(target=run_inject, daemon=True).start()
-            return jsonify({"text": "Ingestion started... progress will be posted shortly."}), 200
+            # Inform user if purge was requested
+            if purge_flag:
+                # Acknowledge purge-only
+                ack_msg = "Purging existing collection. Progress will be posted shortly."
+            else:
+                ack_msg = "Ingestion started... progress will be posted shortly."
+            return jsonify({"text": ack_msg}), 200
     except Exception as e:
         import traceback
         traceback.print_exc()

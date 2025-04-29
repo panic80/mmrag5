@@ -125,12 +125,37 @@ def get_openai_client(api_key: str):
 
 
 def load_documents(source: str, chunk_size: int = 500, overlap: int = 50) -> List[Document]:
-    """Use *docling* to load and chunk documents from *source*.
+    """
+    Use *docling* to load and chunk documents from *source*.
 
-    The function tries to stay *schema‑agnostic*.  For every item docling
+    The function tries to stay *schema-agnostic*.  For every item docling
     yields, we keep its raw representation as the ``payload`` (metadata), and
     attempt to locate a reasonable textual representation for embedding.
     """
+    # If source is a URL, fetch HTML and extract text without docling
+    if source.lower().startswith(("http://", "https://")):
+        # Fetch HTML content
+        import requests
+        from bs4 import BeautifulSoup
+
+        try:
+            response = requests.get(source)
+            response.raise_for_status()
+        except Exception as e:
+            click.echo(f"[fatal] Failed to fetch URL '{source}': {e}", err=True)
+            sys.exit(1)
+
+        # Parse HTML and extract text
+        soup = BeautifulSoup(response.text, "html.parser")
+        text = soup.get_text(separator="\n")
+        # Chunk text naively
+        text_chunks = chunk_text(text, chunk_size)
+        # Build Document objects
+        return [
+            Document(content=chunk, metadata={"source": source, "chunk_index": idx})
+            for idx, chunk in enumerate(text_chunks)
+        ]
+
 
     # Otherwise, attempt to use docling extract + chunk pipeline for local files
     try:

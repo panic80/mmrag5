@@ -225,7 +225,7 @@
 
  ### query_rag.py
  - `--collection <name>`      Qdrant collection to query (default: `rag_data`).
-- `--k <int>`                Number of nearest neighbors to retrieve (default: 150).
+ - `--k <int>`                Number of nearest neighbors to retrieve (default: 150).
  - `--snippet/--no-snippet`   Show or hide text snippets (default: show).
  - `--model <name>`           OpenAI embedding model (default: `text-embedding-3-large`).
  - `--qdrant-host <host>`     Qdrant host (default: `localhost`).
@@ -243,6 +243,34 @@
  - `-f, --filter key=value`   Filter by payload key=value (can repeat).
  - `<query>`                  Query text (positional argument).
 
+ ---
+ ## Automated Evaluation
+
+ Use the included `evaluate_rag.py` to run automated RAG evaluation with RAGAS, Constitutional-Judge, and LangGraph.
+
+ 1. Install evaluation packages:
+ ```bash
+ pip install ragas constitutional-judge langgraph
+ ```
+
+ 2. Prepare a test file (`tests/eval_cases.jsonl`) with one JSON object per line:
+ ```jsonl
+ {"query": "What is our refund policy?", "ground_truth": "Our refund policy is ...", "relevant_doc_ids": ["id1","id2",...]}
+ ```
+
+ 3. Run evaluation:
+ ```bash
+ python evaluate_rag.py \
+   --test-file tests/eval_cases.jsonl \
+   --collection my_collection \
+   --qdrant-url http://localhost:6333 \
+   --openai-api-key $OPENAI_API_KEY \
+   --framework ragas \
+   --framework cj \
+   --framework langgraph
+ ```
+
+ The script will output average scores per framework.
  ---
 
  ## Docker / docker‑compose Deployment
