@@ -316,11 +316,10 @@ def handle_slash():
                             docs.append(_Doc(content=doc.content, metadata=meta))
 
                         total_chunks = len(docs)
-                        post(
-                            f"Chunked channel into {total_chunks} chunk(s) from {len(msgs)} "
-                            "messages – embedding & upserting…"
-                        )
-
+                        # Report chunking completion
+                        post(f"Chunked channel into {total_chunks} chunk(s) from {len(msgs)} messages.")
+                        # Begin embedding of channel chunks
+                        post(f"Embedding & upserting {total_chunks} chunks into '{collection}'...")
                         embed_and_upsert(
                             client,
                             collection,
@@ -329,11 +328,8 @@ def handle_slash():
                             batch_size=16,
                             deterministic_id=True,
                         )
-
-                        post(
-                            f"✅ Ingested {total_chunks} chunks from {len(msgs)} messages into "
-                            f"'{collection}'."
-                        )
+                        # Report ingestion complete for channel
+                        post(f"✅ Ingested {total_chunks} chunks from {len(msgs)} messages into '{collection}'.")
                         return
 
                     # Ingest provided sources
@@ -363,11 +359,16 @@ def handle_slash():
                             else:
                                 # Remote HTML or other URL: use URL directly for crawling
                                 local_src = source
+                        # Initial status: crawling and chunking
+                        post(f"[{idx}/{total_sources}] Fetching and chunking '{source}' (depth={crawl_depth_var})...")
                         # Load, extract and chunk via docling
                         docs = load_documents(local_src, chunk_size=chunk_size_var, overlap=chunk_overlap_var, crawl_depth=crawl_depth_var)
-                        cnt = len(docs); total_chunks += cnt
+                        cnt = len(docs)
+                        total_chunks += cnt
+                        post(f"[{idx}/{total_sources}] Chunked '{source}' into {cnt} chunks.")
+                        post(f"[{idx}/{total_sources}] Embedding & upserting {cnt} chunks...")
                         embed_and_upsert(client, collection, docs, openai_client, batch_size=16, deterministic_id=True)
-                        post(f"[{idx}/{total_sources}] Processed {cnt} chunks from '{source}'. Total: {total_chunks} chunks.")
+                        post(f"[{idx}/{total_sources}] Embedded & upserted {cnt} chunks from '{source}'. Total chunks so far: {total_chunks}.")
                         # Cleanup temp PDF
                         if local_src != source:
                             try: os.remove(local_src)
