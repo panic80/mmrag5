@@ -13,6 +13,46 @@ from qdrant_client import QdrantClient
 
 # Reuse OpenAI client helper from ingest_rag
 from ingest_rag import get_openai_client
+import math
+
+def _cosine_sim(a: Sequence[float], b: Sequence[float]) -> float:
+    """Compute cosine similarity between two vectors."""
+    dot = 0.0
+    norm_a = 0.0
+    norm_b = 0.0
+    for x, y in zip(a, b):
+        dot += x * y
+        norm_a += x * x
+        norm_b += y * y
+    if norm_a <= 0.0 or norm_b <= 0.0:
+        return 0.0
+    return dot / (math.sqrt(norm_a) * math.sqrt(norm_b))
+
+def _mmr_rerank(points: list[Any], mmr_lambda: float) -> list[Any]:
+    """Apply Maximal Marginal Relevance to reorder points for diversity."""
+    selected: list[Any] = []
+    candidates = points.copy()
+    # Stepwise selection
+    while candidates:
+        if not selected:
+            # pick highest relevance
+            best = max(candidates, key=lambda p: getattr(p, 'score', 0.0))
+        else:
+            best = None
+            best_score = None
+            for p in candidates:
+                rel = getattr(p, 'score', 0.0)
+                # novelty: max similarity to already selected
+                nov = max(_cosine_sim(getattr(p, 'vector', []), getattr(s, 'vector', [])) for s in selected)
+                mmr_score = mmr_lambda * rel - (1.0 - mmr_lambda) * nov
+                if best is None or mmr_score > best_score:
+                    best = p
+                    best_score = mmr_score
+        if best is None:
+            break
+        selected.append(best)
+        candidates.remove(best)
+    return selected
 
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
@@ -62,6 +102,8 @@ from ingest_rag import get_openai_client
 @click.option("--rrf-k", type=float, default=60.0, show_default=True, help="Reciprocal Rank Fusion k hyperparameter.")
 @click.option("--rerank-top", type=int, default=0, show_default=True,
               help="Number of top retrieval results to re-rank using a cross-encoder (requires sentence-transformers).")
+@click.option("--mmr-lambda", type=float, default=0.5, show_default=True,
+              help="MMR diversity parameter (lambda: 0=full diversity, 1=full relevance). Always applied by default.")
 @click.option("--filter", "-f", "filters", multiple=True, help="Filter by payload key=value. Can be used multiple times.")
 @click.argument("query", nargs=-1, required=True)
 def main(
@@ -82,6 +124,7 @@ def main(
     bm25_top: int | None,
     rrf_k: float,
     rerank_top: int,
+    mmr_lambda: float,
     filters: Sequence[str],
     query: Sequence[str],
 ) -> None:
@@ -150,6 +193,7 @@ def main(
                 query=vector,
                 limit=k,
                 with_payload=True,
+                with_vectors=True,
                 query_filter=filter_obj,
             )
             scored = getattr(resp, 'points', [])
@@ -160,6 +204,7 @@ def main(
                 query_vector=vector,
                 limit=k,
                 with_payload=True,
+                with_vectors=True,
                 query_filter=filter_obj,
             )
     except UnexpectedResponse as e:
@@ -171,6 +216,8 @@ def main(
         raise
     # Hybrid fusion (BM25 + vector) if enabled
     if hybrid:
+        # Cache original scored list with vectors for MMR
+        orig_scored = scored
         try:
             import json
             from rank_bm25 import BM25Okapi
@@ -270,8 +317,15 @@ def main(
                         else:
                             payload_map[pid] = {}
                 # Replace scored with fused SimpleNamespace objects
+                # Preserve vector from original scored points
+                vector_map = {p.id: getattr(p, 'vector', None) for p in orig_scored}
                 scored = [
-                    SimpleNamespace(id=pid, payload=payload_map.get(pid, {}), score=fused_scores.get(pid, 0.0))
+                    SimpleNamespace(
+                        id=pid,
+                        payload=payload_map.get(pid, {}),
+                        score=fused_scores.get(pid, 0.0),
+                        vector=vector_map.get(pid),
+                    )
                     for pid in fused_ids
                 ]
 
@@ -281,6 +335,13 @@ def main(
         # `scored` list coming from the pure‑vector Qdrant search so that the
         # rest of the pipeline (answer generation, summaries, etc.) continues
         # to function as expected.
+    # MMR re-ranking for diversity + relevance
+    try:
+        if mmr_lambda is not None:
+            click.echo(f"[info] Applying MMR re-ranking (lambda={mmr_lambda})...")
+            scored = _mmr_rerank(scored, mmr_lambda)
+    except Exception as e:
+        click.echo(f"[warning] MMR re-ranking failed: {e}", err=True)
     # Cross-encoder re-ranking if requested
     if rerank_top and rerank_top > 0:
         # Re-order top results using a cross-encoder model
@@ -343,8 +404,18 @@ def main(
                     snippet = text.replace("\n", " ")[:max_ctx_chars]
                     context_chunks.append(snippet)
             context = "\n\n---\n\n".join(context_chunks)
-            system_msg = {"role": "system", "content": "You are a helpful assistant."}
-            user_msg = {"role": "user", "content": f"Use the following context to answer the question.\n\nContext:\n{context}\n\nQuestion: {query_text}"}
+            # Guide the model to use context but allow factual elaboration
+            system_msg = {
+                "role": "system",
+                "content": (
+                    "You are a helpful assistant. "
+                    "Answer the question using the provided context as the primary source. "
+                    "You may use your general knowledge to elaborate, but clearly indicate any information not present in the context."
+                )
+            }
+            user_msg = {
+                "role": "user",
+                "content": f"Context:\n{context}\n\nQuestion: {query_text}"}
             if hasattr(openai_client, "chat"):
                 chat_resp = openai_client.chat.completions.create(model=llm_model, messages=[system_msg, user_msg])
                 answer = chat_resp.choices[0].message.content
@@ -365,8 +436,19 @@ def main(
             snippet = text.replace("\n", " ")[:max_ctx_chars]
             context_chunks.append(snippet)
     context = "\n\n---\n\n".join(context_chunks)
-    system_msg = {"role": "system", "content": "You are a helpful assistant."}
-    user_msg = {"role": "user", "content": f"Provide a brief summary of the following context relative to the question.\n\nContext:\n{context}\n\nQuestion: {query_text}"}
+    # Guide the model to produce a detailed summary based on context
+    system_msg = {
+        "role": "system",
+        "content": (
+            "You are a helpful assistant. "
+            "Provide a comprehensive summary of the context that addresses the question. "
+            "Include all relevant details from the context. "
+            "If any answer elements are not found in the context, state 'I don't know.'"
+        )
+    }
+    user_msg = {
+        "role": "user",
+        "content": f"Context:\n{context}\n\nQuestion: {query_text}"}
     if hasattr(openai_client, "chat"):
         chat_resp = openai_client.chat.completions.create(model=llm_model, messages=[system_msg, user_msg])
         summary = chat_resp.choices[0].message.content

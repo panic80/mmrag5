@@ -168,7 +168,13 @@ def handle_slash():
                     crawl_depth_var = 0
                     clean_args: list[str] = []
                     i = 0
+                    # Parse slash-command flags for injection
+                    # Known flags: chunk-size, chunk-overlap, crawl-depth, purge, collection,
+                    # generate-summaries, quality-checks
+                    gen_summaries_flag = False
+                    qc_flag = False
                     while i < len(args):
+                        # Chunking parameters
                         if args[i] == "--chunk-size" and i + 1 < len(args):
                             try:
                                 chunk_size_var = int(args[i+1])
@@ -182,14 +188,28 @@ def handle_slash():
                                 pass
                             i += 2
                         elif args[i] in ("--crawl-depth", "--depth-crawl") and i + 1 < len(args):
-                            # Crawl-depth alias: accept both orders
                             try:
                                 crawl_depth_var = int(args[i+1])
                             except ValueError:
                                 pass
                             i += 2
+                        # Purge flag
                         elif args[i] == "--purge":
                             clean_args.append(args[i])
+                            i += 1
+                        # Summarization flags
+                        elif args[i] == "--generate-summaries":
+                            gen_summaries_flag = True
+                            i += 1
+                        elif args[i] == "--no-generate-summaries":
+                            gen_summaries_flag = False
+                            i += 1
+                        # Quality-check flags
+                        elif args[i] == "--quality-checks":
+                            qc_flag = True
+                            i += 1
+                        elif args[i] == "--no-quality-checks":
+                            qc_flag = False
                             i += 1
                         else:
                             clean_args.append(args[i])
@@ -233,6 +253,79 @@ def handle_slash():
                         return
                     else:
                         ensure_collection(client, collection, vector_size=3072)
+                    # If summaries or quality checks requested, delegate to ingest_rag CLI
+                    if gen_summaries_flag or qc_flag:
+                        # Determine list of sources (args) or channel transcript
+                        sources = list(args)
+                        tmp_path = None
+                        if not sources:
+                            # Fetch channel messages to temp file
+                            if not mattermost_url:
+                                post("❌ MATTERMOST_URL is not configured – unable to fetch channel messages.")
+                                return
+                            msgs = []
+                            hdrs = {"Authorization": f"Bearer {mattermost_token}"} if mattermost_token else {}
+                            per_page = 200
+                            page = 0
+                            while True:
+                                resp_ct = requests.get(
+                                    f"{mattermost_url}/api/v4/channels/{channel_id}/posts",
+                                    params={"page": page, "per_page": per_page},
+                                    headers=hdrs,
+                                )
+                                if resp_ct.status_code != 200:
+                                    post(f"❌ Error fetching posts: {resp_ct.status_code} {resp_ct.text}")
+                                    return
+                                data_ct = resp_ct.json()
+                                posts = data_ct.get("posts", {})
+                                order = data_ct.get("order", [])
+                                if not order:
+                                    break
+                                for pid in order:
+                                    p = posts.get(pid)
+                                    if p and p.get("message"):
+                                        msgs.append(p["message"])
+                                if len(order) < per_page:
+                                    break
+                                page += 1
+                            if not msgs:
+                                post("No messages to ingest – channel is empty.")
+                                return
+                            tmp = tempfile.NamedTemporaryFile(mode="w+", suffix=".txt", delete=False)
+                            tmp_path = tmp.name; tmp.write("\n".join(m.rstrip("\n") for m in msgs)); tmp.close()
+                            sources = [tmp_path]
+                        # Run ingest_rag CLI for each source
+                        for src in sources:
+                            cmd = ["python3", "-m", "ingest_rag", "--source", src, "--collection", collection,
+                                   "--chunk-size", str(chunk_size_var), "--chunk-overlap", str(chunk_overlap_var),
+                                   "--crawl-depth", str(crawl_depth_var)]
+                            if gen_summaries_flag:
+                                cmd.append("--generate-summaries")
+                            if qc_flag:
+                                cmd.append("--quality-checks")
+                            # pass Qdrant URL from env if set
+                            qurl = os.environ.get("QDRANT_URL")
+                            if qurl and not any(a.startswith("--qdrant-url") for a in cmd):
+                                cmd.extend(["--qdrant-url", qurl])
+                            # Execute and stream output
+                            try:
+                                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                            except Exception as e:
+                                post(f"❌ Failed to start ingestion subprocess: {e}")
+                                continue
+                            if proc.stdout:
+                                for line in proc.stdout:
+                                    post(line.rstrip())
+                            ret = proc.wait()
+                            if ret != 0:
+                                post(f"❌ Ingestion subprocess exited with code {ret}")
+                        # Cleanup temp file
+                        if tmp_path:
+                            try:
+                                os.remove(tmp_path)
+                            except OSError:
+                                pass
+                        return
 
                     # No explicit sources ⇒ ingest the current channel transcript.
 

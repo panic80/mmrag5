@@ -466,7 +466,12 @@ def embed_and_upsert(
 
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
-@click.option("--env-file", type=click.Path(exists=True, dir_okay=False, readable=True), default=".env", show_default=True, help="Path to .env file with environment variables (if present, loaded before other options).")
+@click.option(
+    "--env-file",
+    type=click.Path(dir_okay=False, readable=True),
+    default=None,
+    help="Path to .env file with environment variables (if present, loaded before other options)."
+)
 @click.option("--source", required=True, help="Path/URL/DSN pointing to the corpus to ingest.")
 @click.option("--collection", default="rag_data", show_default=True, help="Qdrant collection name to create/use.")
 @click.option("--batch-size", type=int, default=100, show_default=True, help="Embedding batch size.")
@@ -479,6 +484,10 @@ def embed_and_upsert(
 @click.option("--chunk-size", type=int, default=500, show_default=True, help="Chunk size (tokens) for docling chunker.")
 @click.option("--chunk-overlap", type=int, default=50, show_default=True, help="Overlap (tokens) between chunks.")
 @click.option("--crawl-depth", type=int, default=0, show_default=True, help="When SOURCE is a URL, crawl hyperlinks up to this depth (0=no crawl).")
+@click.option("--generate-summaries/--no-generate-summaries", default=False, show_default=True,
+              help="Generate and index brief summaries of each chunk for multi-granularity retrieval.")
+@click.option("--quality-checks/--no-quality-checks", default=False, show_default=True,
+              help="Perform post-ingest quality checks on chunk sizes and entity consistency.")
 @click.option(
     "--bm25-index",
     type=click.Path(dir_okay=False, writable=True),
@@ -487,7 +496,7 @@ def embed_and_upsert(
          " Defaults to '<collection>_bm25_index.json'.",
 )
 def cli(
-    env_file: str,
+    env_file: str | None,
     source: str,
     collection: str,
     batch_size: int,
@@ -500,8 +509,10 @@ def cli(
     chunk_size: int,
     chunk_overlap: int,
     crawl_depth: int,
+    generate_summaries: bool,
+    quality_checks: bool,
     bm25_index: str | None,
-):
+) -> None:
     """Ingest *SOURCE* into a Qdrant RAG database using OpenAI embeddings."""
 
     # ---------------------------------------------------------------------
@@ -560,6 +571,65 @@ def cli(
     if not documents:
         click.echo("[warning] No documents found – nothing to do.")
         return
+
+    # -----------------------------------------------------------------
+    # Enhanced metadata, quality checks, and optional summarization
+    # -----------------------------------------------------------------
+    # Annotate each chunk with enhanced metadata
+    for idx, doc in enumerate(documents):
+        # Source file or URL
+        doc.metadata.setdefault("source", source)
+        # Section title: first line of chunk
+        first_line = doc.content.split("\n", 1)[0].strip()
+        doc.metadata.setdefault("section", first_line[:100])
+        # Neighboring chunk indices for stitching
+        doc.metadata.setdefault("neighbor_prev", idx - 1 if idx > 0 else None)
+        doc.metadata.setdefault("neighbor_next", idx + 1 if idx < len(documents) - 1 else None)
+
+    # Post-ingest quality checks on chunk sizes
+    if quality_checks:
+        for doc in documents:
+            token_count = len(doc.content.split())
+            if token_count < chunk_overlap or token_count > chunk_size * 2:
+                click.echo(
+                    f"[warning] Chunk index={doc.metadata.get('chunk_index')} "
+                    f"token_count={token_count} out of bounds (<{chunk_overlap} or >{chunk_size * 2})",
+                    err=True,
+                )
+
+    # LLM-assisted summarization for multi-granularity indexing
+    summary_docs: list[Document] = []
+    if generate_summaries:
+        click.echo(f"[info] Generating summaries for {len(documents)} chunks...")
+        llm = get_openai_client(openai_api_key)
+        for doc in documents:
+            # Skip very short chunks
+            if len(doc.content) < 200:
+                continue
+            system_msg = {"role": "system", "content": "You are a helpful assistant."}
+            user_msg = {
+                "role": "user",
+                "content": f"Provide a concise (1-2 sentences) summary of the following text:\n\n{doc.content}",
+            }
+            try:
+                if hasattr(llm, "chat"):
+                    resp = llm.chat.completions.create(
+                        model="gpt-4.1-nano", messages=[system_msg, user_msg]
+                    )
+                    summary = resp.choices[0].message.content.strip()
+                else:
+                    resp = llm.ChatCompletion.create(
+                        model="gpt-4.1-nano", messages=[system_msg, user_msg]
+                    )
+                    summary = resp.choices[0].message.content.strip()  # type: ignore
+            except Exception as e:
+                click.echo(f"[warning] Summary generation failed: {e}", err=True)
+                continue
+            meta = doc.metadata.copy()
+            meta["is_summary"] = True
+            summary_docs.append(Document(content=summary, metadata=meta))
+        # Append summary-level Documents for indexing
+        documents.extend(summary_docs)
 
     # ---------------------------------------------------------------------
     # Create collection if it does not exist
