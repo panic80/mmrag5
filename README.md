@@ -161,7 +161,7 @@
 
  **Hybrid + LLM Answer**:
  ```bash
- python query_rag.py --hybrid --bm25-top 10 --alpha 0.6 --llm-model gpt-4 "Summarize policy"
+ python query_rag.py --hybrid --bm25-top 10 --alpha 0.6 --llm-model gpt-4.1-mini "Summarize policy"
  ```
 
  **Slash‑Command (Mattermost)**:

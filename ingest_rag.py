@@ -134,7 +134,7 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50) -> Lis
     """
     # If source is a URL, fetch HTML and extract text without docling
     if source.lower().startswith(("http://", "https://")):
-        # Fetch HTML content
+        # Fetch HTML content and chunk by tokens
         import requests
         from bs4 import BeautifulSoup
 
@@ -145,50 +145,68 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50) -> Lis
             click.echo(f"[fatal] Failed to fetch URL '{source}': {e}", err=True)
             sys.exit(1)
 
-        # Parse HTML and extract text
         soup = BeautifulSoup(response.text, "html.parser")
         text = soup.get_text(separator="\n")
-        # Chunk text naively
-        text_chunks = chunk_text(text, chunk_size)
-        # Build Document objects
+        # Token-based chunking
+        try:
+            from docling.text import TextSplitter
+        except ImportError:
+            from docling_core.text import TextSplitter
+        try:
+            splitter = TextSplitter.from_model(model="gpt-4.1-mini", chunk_size=chunk_size, chunk_overlap=overlap)
+            chunks = splitter.split(text)
+        except Exception:
+            chunks = chunk_text(text, chunk_size)
         return [
             Document(content=chunk, metadata={"source": source, "chunk_index": idx})
-            for idx, chunk in enumerate(text_chunks)
+            for idx, chunk in enumerate(chunks)
         ]
 
 
-    # Otherwise, attempt to use docling extract + chunk pipeline for local files
+    # Try docling extract to get raw text, then chunk by tokens (fallback to char-chunks)
+    def _chunk_text_tokenwise(text: str, metadata: dict[str, object]) -> List[Document]:
+        docs_out: list[Document] = []
+        # Attempt token-based splitting
+        try:
+            try:
+                from docling.text import TextSplitter
+            except ImportError:
+                from docling_core.text import TextSplitter
+            splitter = TextSplitter.from_model(model="gpt-4.1-mini", chunk_size=chunk_size, chunk_overlap=overlap)
+            chunks = splitter.split(text)
+        except Exception:
+            # Fallback to simple char-based splitting
+            chunks = chunk_text(text, chunk_size)
+        for idx, chunk in enumerate(chunks):
+            new_meta = dict(metadata)
+            new_meta["chunk_index"] = idx
+            docs_out.append(Document(content=chunk, metadata=new_meta))
+        return docs_out
+
     try:
-        # Use new docling modules; fall back to core package
         try:
             import docling.extract as dlextract
-            import docling.chunk as dlchunk
         except ImportError:
             import docling_core.extract as dlextract
-            import docling_core.chunk as dlchunk
         extractor = dlextract.TextExtractor(path=source, include_comments=True)
         extracted = extractor.run()
-        chunker = dlchunk.Chunker(chunk_size=chunk_size, overlap=overlap)
-        chunked_docs = chunker.run(extracted)
         documents: list[Document] = []
-        for doc in chunked_docs:
-            # determine textual content
+        for doc in extracted:
             if hasattr(doc, "text") and isinstance(doc.text, str):
-                text = doc.text
+                txt = doc.text
             elif hasattr(doc, "content") and isinstance(doc.content, str):
-                text = doc.content
+                txt = doc.content
             else:
-                text = str(doc)
-            # copy any metadata dict
-            metadata = getattr(doc, "metadata", {}) or {}
-            documents.append(Document(content=text, metadata=dict(metadata)))
+                txt = str(doc)
+            meta = getattr(doc, "metadata", {}) or {}
+            documents.extend(_chunk_text_tokenwise(txt, meta))
         return documents
     except ImportError:
-        # docling.extract or docling.chunk not available; fall back to legacy API
+        # docling.extract not available; fall back to legacy loader
         pass
     except Exception as e:
-        click.echo(f"[warning] docling extract/chunk pipeline failed: {e}", err=True)
-        click.echo("[warning] Falling back to legacy docling loader...", err=True)
+        click.echo(f"[warning] docling extract failed: {e}", err=True)
+        click.echo("[warning] Falling back to legacy loader...", err=True)
     # Otherwise, delegate to legacy docling if available
     try:
         docling = _lazy_import("docling")
@@ -220,21 +238,19 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50) -> Lis
         dataset = docling.DocumentSet(source)  # type: ignore
     # Try new API in submodule: DocumentConverter
     else:
-        # Try new API in submodule: DocumentConverter, fallback to plain-text on failure
         try:
             dc_mod = __import__("docling.document_converter", fromlist=["DocumentConverter"])
             converter = dc_mod.DocumentConverter()
             conv_res = converter.convert(source)
-            # Extract textual content from the converted document
             doc_obj = conv_res.document
             if hasattr(doc_obj, "export_to_text") and callable(doc_obj.export_to_text):
                 text = doc_obj.export_to_text()
             else:
                 text = str(doc_obj)
-            # Return single-chunk document
-            return [Document(content=text, metadata={"source": source, "chunk_index": 0})]
+            meta = {"source": source}
+            # Chunk converted document into tokens
+            return _chunk_text_tokenwise(text, meta)
         except Exception as e:
-            # Fallback: treat as plain-text, naive whitespace chunking
             click.echo(f"[warning] docling.document_converter failed for '{source}': {e}. Falling back to plain-text chunking.", err=True)
             try:
                 with open(source, "r", encoding="utf-8", errors="replace") as fh:
@@ -242,10 +258,9 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50) -> Lis
             except Exception as e2:
                 click.echo(f"[fatal] Could not read source '{source}': {e2}", err=True)
                 sys.exit(1)
-            # Split on whitespace into chunks
-            text_chunks = chunk_text(full_text, chunk_size)
+            chunks = chunk_text(full_text, chunk_size)
             return [Document(content=chunk, metadata={"source": source, "chunk_index": idx})
-                    for idx, chunk in enumerate(text_chunks)]
+                    for idx, chunk in enumerate(chunks)]
 
     documents: list[Document] = []
 
@@ -281,7 +296,9 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50) -> Lis
         except (TypeError, ValueError):
             metadata["raw"] = str(doc)
 
-        documents.append(Document(content=text, metadata=metadata))
+        # Chunk legacy documents token-wise (fallback by char if token splitter missing)
+        for chunk_doc in _chunk_text_tokenwise(text, metadata):
+            documents.append(chunk_doc)
 
     return documents
 
@@ -369,8 +386,8 @@ def embed_and_upsert(
 @click.option("--qdrant-url", help="Full Qdrant URL (e.g. https://*.qdrant.io:6333). Overrides host/port.")
 @click.option("--qdrant-api-key", envvar="QDRANT_API_KEY", help="Qdrant API key if required (Cloud).")
 @click.option("--distance", type=click.Choice(["Cosine", "Dot", "Euclid"], case_sensitive=False), default="Cosine", help="Vector distance metric.")
-@click.option("--chunk-size", type=int, default=500, show_default=True, help="Chunk size (characters) for docling chunker.")
-@click.option("--chunk-overlap", type=int, default=50, show_default=True, help="Overlap (characters) between chunks.")
+@click.option("--chunk-size", type=int, default=500, show_default=True, help="Chunk size (tokens) for docling chunker.")
+@click.option("--chunk-overlap", type=int, default=50, show_default=True, help="Overlap (tokens) between chunks.")
 @click.option(
     "--bm25-index",
     type=click.Path(dir_okay=False, writable=True),

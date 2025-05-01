@@ -18,6 +18,9 @@ def health():
 @app.route("/ask/",   methods=["GET", "POST"])
 @app.route("/",        methods=["GET", "POST"])
 def handle_slash():
+    # Bare GET to root path can be used as a health check without slash payloads
+    if request.path == "/" and request.method == "GET":
+        return jsonify({"status": "ok"}), 200
     try:
         # Mattermost will send either GET?text=... or POST form text=...
         if request.method == "GET":
@@ -289,7 +292,7 @@ def handle_slash():
                             collection,
                             docs,
                             openai_client,
-                            batch_size=64,
+                            batch_size=16,
                             deterministic_id=True,
                         )
 
@@ -340,7 +343,7 @@ def handle_slash():
                         # Load, extract and chunk via docling
                         docs = load_documents(local_src, chunk_size=500)
                         cnt = len(docs); total_chunks += cnt
-                        embed_and_upsert(client, collection, docs, openai_client, batch_size=64, deterministic_id=True)
+                        embed_and_upsert(client, collection, docs, openai_client, batch_size=16, deterministic_id=True)
                         post(f"[{idx}/{total_sources}] Processed {cnt} chunks from '{source}'. Total: {total_chunks} chunks.")
                         # Cleanup temp PDF
                         if local_src != source:
