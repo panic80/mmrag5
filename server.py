@@ -162,6 +162,40 @@ def handle_slash():
 
                 try:
                     args = shlex.split(text or "")
+                    # Parse slash-command flags for injection
+                    chunk_size_var = 500
+                    chunk_overlap_var = 50
+                    crawl_depth_var = 0
+                    clean_args: list[str] = []
+                    i = 0
+                    while i < len(args):
+                        if args[i] == "--chunk-size" and i + 1 < len(args):
+                            try:
+                                chunk_size_var = int(args[i+1])
+                            except ValueError:
+                                pass
+                            i += 2
+                        elif args[i] == "--chunk-overlap" and i + 1 < len(args):
+                            try:
+                                chunk_overlap_var = int(args[i+1])
+                            except ValueError:
+                                pass
+                            i += 2
+                        elif args[i] in ("--crawl-depth", "--depth-crawl") and i + 1 < len(args):
+                            # Crawl-depth alias: accept both orders
+                            try:
+                                crawl_depth_var = int(args[i+1])
+                            except ValueError:
+                                pass
+                            i += 2
+                        elif args[i] == "--purge":
+                            clean_args.append(args[i])
+                            i += 1
+                        else:
+                            clean_args.append(args[i])
+                            i += 1
+                    args = clean_args
+                    # Handle purge flag
                     purge = False
                     if "--purge" in args:
                         purge = True
@@ -255,7 +289,7 @@ def handle_slash():
                         # 3. Let `load_documents()` (docling) do the heavy lifting.
                         try:
                             try:
-                                docs_temp = load_documents(tmp_path, chunk_size=500, overlap=50)
+                                docs_temp = load_documents(tmp_path, chunk_size=chunk_size_var, overlap=chunk_overlap_var)
                             except BaseException:
                                 # Fallback: cheap whitespace splitter as a last resort
                                 from ingest_rag import chunk_text as _chunk_text, Document as _Document
@@ -327,21 +361,10 @@ def handle_slash():
                                     post(f"❌ Download failed: {e}")
                                     return
                             else:
-                                # Remote HTML/other: fetch content to temp .html file
-                                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".html")
-                                tmp_path = tmp.name; tmp.close()
-                                try:
-                                    resp = requests.get(source, timeout=60)
-                                    resp.raise_for_status()
-                                    # Write as text for HTML extraction
-                                    with open(tmp_path, "w", encoding="utf-8", errors="replace") as f:
-                                        f.write(resp.text)
-                                    local_src = tmp_path
-                                except Exception as e:
-                                    post(f"❌ Download failed: {e}")
-                                    return
+                                # Remote HTML or other URL: use URL directly for crawling
+                                local_src = source
                         # Load, extract and chunk via docling
-                        docs = load_documents(local_src, chunk_size=500)
+                        docs = load_documents(local_src, chunk_size=chunk_size_var, overlap=chunk_overlap_var, crawl_depth=crawl_depth_var)
                         cnt = len(docs); total_chunks += cnt
                         embed_and_upsert(client, collection, docs, openai_client, batch_size=16, deterministic_id=True)
                         post(f"[{idx}/{total_sources}] Processed {cnt} chunks from '{source}'. Total: {total_chunks} chunks.")

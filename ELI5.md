@@ -58,7 +58,8 @@
  - `--bm25-index <file>`: reuse a saved word‑search index.
 - `--llm-model <model>`: specify the LLM to use (default: `gpt-4.1-mini`; set to empty to skip).
 - `--raw`: show raw retrieval hits and full answer (requires `--llm-model`).
- - `--chunk-size` / `--chunk-overlap`: control how big or overlapping each piece is.
+- `--chunk-size` / `--chunk-overlap`: control how big or overlapping each piece is.
+- `--crawl-depth <int>`: when SOURCE is a URL, crawl hyperlinks up to this depth (default: 0=no crawl).
 
  And that’s it! You now have a magic question‑answering box for your documents.
  

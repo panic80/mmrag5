@@ -198,7 +198,8 @@
    --chunk-size 1000 \
    --chunk-overlap 200 \
    --distance Euclid \
-   --batch-size 50
+   --batch-size 50 \
+   --crawl-depth 2
  ```
 
  **Mattermost `/inject` Sling Command with Purge**:
@@ -219,9 +220,10 @@
  - `--qdrant-url <url>`       Full Qdrant URL (overrides host/port).
  - `--qdrant-api-key <key>`   Qdrant API key (or use `QDRANT_API_KEY` env var).
  - `--distance <metric>`      Vector distance: `Cosine`, `Dot`, `Euclid` (default: `Cosine`).
- - `--chunk-size <int>`       Max characters per chunk (default: 500).
- - `--chunk-overlap <int>`    Overlap characters between chunks (default: 50).
-- `--bm25-index <path>`       Path to write BM25 JSON index mapping point IDs to chunk_text (default: `<collection>_bm25_index.json`).
+ - `--chunk-size <int>`       Max tokens per chunk (default: 500).
+ - `--chunk-overlap <int>`    Overlap tokens between chunks (default: 50).
+ - `--crawl-depth <int>`      Crawl hyperlinks up to this depth when SOURCE is a URL (default: 0=no crawl).
+ - `--bm25-index <path>`       Path to write BM25 JSON index mapping point IDs to chunk_text (default: `<collection>_bm25_index.json`).
 
  ### query_rag.py
  - `--collection <name>`      Qdrant collection to query (default: `rag_data`).

@@ -124,7 +124,7 @@ def get_openai_client(api_key: str):
 # ---------------------------------------------------------------------------
 
 
-def load_documents(source: str, chunk_size: int = 500, overlap: int = 50) -> List[Document]:
+def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_depth: int = 0) -> List[Document]:
     """
     Use *docling* to load and chunk documents from *source*.
 
@@ -132,50 +132,64 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50) -> Lis
     yields, we keep its raw representation as the ``payload`` (metadata), and
     attempt to locate a reasonable textual representation for embedding.
     """
-    # If source is a URL, fetch HTML and extract text without docling
+    # If source is a URL, fetch HTML and optionally crawl links
     if source.lower().startswith(("http://", "https://")):
-        # Fetch HTML content and chunk by tokens
         import requests
         from bs4 import BeautifulSoup
+        from urllib.parse import urlparse, urljoin
 
-        try:
-            response = requests.get(source)
-            response.raise_for_status()
-        except Exception as e:
-            click.echo(f"[fatal] Failed to fetch URL '{source}': {e}", err=True)
-            sys.exit(1)
-
-        soup = BeautifulSoup(response.text, "html.parser")
-        text = soup.get_text(separator="\n")
-        # Token-based chunking
-        try:
-            from docling.text import TextSplitter
-        except ImportError:
-            from docling_core.text import TextSplitter
-        try:
-            splitter = TextSplitter.from_model(model="gpt-4.1-mini", chunk_size=chunk_size, chunk_overlap=overlap)
-            chunks = splitter.split(text)
-        except Exception:
-            chunks = chunk_text(text, chunk_size)
-        return [
-            Document(content=chunk, metadata={"source": source, "chunk_index": idx})
-            for idx, chunk in enumerate(chunks)
-        ]
+        # Crawl pages up to crawl_depth (0 = only this page)
+        root_domain = urlparse(source).netloc
+        visited: set[str] = set()
+        def _crawl(url: str, depth: int) -> List[Document]:
+            if url in visited:
+                return []
+            visited.add(url)
+            try:
+                resp = requests.get(url)
+                resp.raise_for_status()
+                html = resp.text
+            except Exception as e:
+                click.echo(f"[warning] Failed to fetch URL '{url}': {e}", err=True)
+                return []
+            soup = BeautifulSoup(html, "html.parser")
+            text = soup.get_text(separator="\n")
+            # Token-based chunking; fall back to char-based
+            try:
+                from docling.text import TextSplitter
+                splitter = TextSplitter.from_model(model="gpt-4.1-mini", chunk_size=chunk_size, chunk_overlap=overlap)
+                page_chunks = splitter.split(text)
+            except Exception:
+                page_chunks = chunk_text(text, chunk_size)
+            docs: list[Document] = []
+            for idx, chunk in enumerate(page_chunks):
+                docs.append(Document(content=chunk, metadata={"source": url, "chunk_index": idx}))
+            # Recurse for links (skip user/profile/category links by default)
+            if depth > 0:
+                for a in soup.find_all("a", href=True):
+                    href = a["href"]
+                    full = urljoin(url, href)
+                    p = urlparse(full)
+                    # Only crawl same-domain HTTP links
+                    if p.scheme not in ("http", "https") or p.netloc != root_domain:
+                        continue
+                    # Skip obvious non-content paths (e.g. user profiles or category listings)
+                    if p.path.startswith("/u/") or p.path.startswith("/c/"):
+                        continue
+                    docs.extend(_crawl(full, depth - 1))
+            return docs
+        return _crawl(source, crawl_depth)
 
 
     # Try docling extract to get raw text, then chunk by tokens (fallback to char-chunks)
     def _chunk_text_tokenwise(text: str, metadata: dict[str, object]) -> List[Document]:
         docs_out: list[Document] = []
-        # Attempt token-based splitting
+        # Token-based splitting; fall back to char-based
         try:
-            try:
-                from docling.text import TextSplitter
-            except ImportError:
-                from docling_core.text import TextSplitter
+            from docling.text import TextSplitter
             splitter = TextSplitter.from_model(model="gpt-4.1-mini", chunk_size=chunk_size, chunk_overlap=overlap)
             chunks = splitter.split(text)
         except Exception:
-            # Fallback to simple char-based splitting
             chunks = chunk_text(text, chunk_size)
         for idx, chunk in enumerate(chunks):
             new_meta = dict(metadata)
@@ -388,6 +402,7 @@ def embed_and_upsert(
 @click.option("--distance", type=click.Choice(["Cosine", "Dot", "Euclid"], case_sensitive=False), default="Cosine", help="Vector distance metric.")
 @click.option("--chunk-size", type=int, default=500, show_default=True, help="Chunk size (tokens) for docling chunker.")
 @click.option("--chunk-overlap", type=int, default=50, show_default=True, help="Overlap (tokens) between chunks.")
+@click.option("--crawl-depth", type=int, default=0, show_default=True, help="When SOURCE is a URL, crawl hyperlinks up to this depth (0=no crawl).")
 @click.option(
     "--bm25-index",
     type=click.Path(dir_okay=False, writable=True),
@@ -408,6 +423,7 @@ def cli(
     distance: str,
     chunk_size: int,
     chunk_overlap: int,
+    crawl_depth: int,
     bm25_index: str | None,
 ):
     """Ingest *SOURCE* into a Qdrant RAG database using OpenAI embeddings."""
@@ -461,8 +477,8 @@ def cli(
     # Load documents via docling
     # ---------------------------------------------------------------------
 
-    click.echo(f"[info] Loading documents from source: {source} (chunk_size={chunk_size}, overlap={chunk_overlap})")
-    documents = load_documents(source, chunk_size, chunk_overlap)
+    click.echo(f"[info] Loading documents from source: {source} (chunk_size={chunk_size}, overlap={chunk_overlap}, crawl_depth={crawl_depth})")
+    documents = load_documents(source, chunk_size, chunk_overlap, crawl_depth)
     click.echo(f"[info] Loaded {len(documents)} document(s)")
 
     if not documents:
