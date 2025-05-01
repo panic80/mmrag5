@@ -132,13 +132,14 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
     yields, we keep its raw representation as the ``payload`` (metadata), and
     attempt to locate a reasonable textual representation for embedding.
     """
-    # If source is a URL, fetch HTML and optionally crawl links
+    # If source is a URL, download pages and let docling parse HTML uniformly
     if source.lower().startswith(("http://", "https://")):
         import requests
+        import tempfile
+        import os
         from bs4 import BeautifulSoup
         from urllib.parse import urlparse, urljoin
 
-        # Crawl pages up to crawl_depth (0 = only this page)
         root_domain = urlparse(source).netloc
         visited: set[str] = set()
         def _crawl(url: str, depth: int) -> List[Document]:
@@ -146,34 +147,36 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
                 return []
             visited.add(url)
             try:
-                resp = requests.get(url)
+                resp = requests.get(url, timeout=60)
                 resp.raise_for_status()
-                html = resp.text
             except Exception as e:
                 click.echo(f"[warning] Failed to fetch URL '{url}': {e}", err=True)
                 return []
-            soup = BeautifulSoup(html, "html.parser")
-            text = soup.get_text(separator="\n")
-            # Token-based chunking; fall back to char-based
+            # Save HTML to a temp file for docling extraction
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".html")
+            tmp.write(resp.content)
+            tmp_path = tmp.name
+            tmp.close()
+            # Use docling extractor + chunker on the file
             try:
-                from docling.text import TextSplitter
-                splitter = TextSplitter.from_model(model="gpt-4.1-mini", chunk_size=chunk_size, chunk_overlap=overlap)
-                page_chunks = splitter.split(text)
-            except Exception:
-                page_chunks = chunk_text(text, chunk_size)
-            docs: list[Document] = []
-            for idx, chunk in enumerate(page_chunks):
-                docs.append(Document(content=chunk, metadata={"source": url, "chunk_index": idx}))
-            # Recurse for links (skip user/profile/category links by default)
+                docs = load_documents(tmp_path, chunk_size, overlap, crawl_depth=0)
+            except Exception as e:
+                click.echo(f"[warning] docling processing failed for '{url}': {e}", err=True)
+                docs = []
+            finally:
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+            # Recurse for links if desired
             if depth > 0:
+                soup = BeautifulSoup(resp.text, "html.parser")
                 for a in soup.find_all("a", href=True):
                     href = a["href"]
                     full = urljoin(url, href)
                     p = urlparse(full)
-                    # Only crawl same-domain HTTP links
                     if p.scheme not in ("http", "https") or p.netloc != root_domain:
                         continue
-                    # Skip obvious non-content paths (e.g. user profiles or category listings)
                     if p.path.startswith("/u/") or p.path.startswith("/c/"):
                         continue
                     docs.extend(_crawl(full, depth - 1))

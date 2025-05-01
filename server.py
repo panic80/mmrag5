@@ -359,16 +359,23 @@ def handle_slash():
                             else:
                                 # Remote HTML or other URL: use URL directly for crawling
                                 local_src = source
-                        # Initial status: crawling and chunking
+                        # Initial status: crawling and collecting chunks for this source
                         post(f"[{idx}/{total_sources}] Fetching and chunking '{source}' (depth={crawl_depth_var})...")
-                        # Load, extract and chunk via docling
+                        # Get all chunks (may include multiple pages)
                         docs = load_documents(local_src, chunk_size=chunk_size_var, overlap=chunk_overlap_var, crawl_depth=crawl_depth_var)
-                        cnt = len(docs)
-                        total_chunks += cnt
-                        post(f"[{idx}/{total_sources}] Chunked '{source}' into {cnt} chunks.")
-                        post(f"[{idx}/{total_sources}] Embedding & upserting {cnt} chunks...")
-                        embed_and_upsert(client, collection, docs, openai_client, batch_size=16, deterministic_id=True)
-                        post(f"[{idx}/{total_sources}] Embedded & upserted {cnt} chunks from '{source}'. Total chunks so far: {total_chunks}.")
+                        # Group chunks by originating page URL in metadata
+                        pages: dict[str, list] = {}
+                        for doc in docs:
+                            page = doc.metadata.get("source", source)
+                            pages.setdefault(page, []).append(doc)
+                        # Process each page separately for visibility
+                        for pg_idx, (page_url, pg_docs) in enumerate(pages.items(), start=1):
+                            pg_count = len(pg_docs)
+                            post(f"[{idx}/{total_sources}] Page {pg_idx}/{len(pages)}: '{page_url}' → {pg_count} chunks")
+                            post(f"[{idx}/{total_sources}] Embedding & upserting {pg_count} chunks from page {pg_idx}...")
+                            embed_and_upsert(client, collection, pg_docs, openai_client, batch_size=16, deterministic_id=True)
+                            total_chunks += pg_count
+                            post(f"[{idx}/{total_sources}] Done page {pg_idx}: total chunks so far: {total_chunks}")
                         # Cleanup temp PDF
                         if local_src != source:
                             try: os.remove(local_src)
