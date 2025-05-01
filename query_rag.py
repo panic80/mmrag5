@@ -43,7 +43,14 @@ def _mmr_rerank(points: list[Any], mmr_lambda: float) -> list[Any]:
             for p in candidates:
                 rel = getattr(p, 'score', 0.0)
                 # novelty: max similarity to already selected
-                nov = max(_cosine_sim(getattr(p, 'vector', []), getattr(s, 'vector', [])) for s in selected)
+                # Compute novelty: maximum similarity to already selected
+                nov = max(
+                    _cosine_sim(
+                        (getattr(p, 'vector', None) or []),
+                        (getattr(s, 'vector', None) or [])
+                    )
+                    for s in selected
+                )
                 mmr_score = mmr_lambda * rel - (1.0 - mmr_lambda) * nov
                 if best is None or mmr_score > best_score:
                     best = p

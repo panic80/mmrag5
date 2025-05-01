@@ -40,9 +40,14 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Iterable, List, Sequence
 
+# Core dependencies
 import click
 from tqdm.auto import tqdm
 import re
+from dateutil.parser import parse as _parse_date
+
+# Regex to detect ISO dates (YYYY-MM-DD) in text
+DATE_REGEX = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 # deterministic UUID generation does not require hashlib
 
 # Optional dependencies – import lazily so that the error message is clearer.
@@ -585,6 +590,21 @@ def cli(
         # Neighboring chunk indices for stitching
         doc.metadata.setdefault("neighbor_prev", idx - 1 if idx > 0 else None)
         doc.metadata.setdefault("neighbor_next", idx + 1 if idx < len(documents) - 1 else None)
+        # Date detection: ISO or general date parsing
+        if "date" not in doc.metadata:
+            m = DATE_REGEX.search(doc.content)
+            if m:
+                # Found ISO-format date
+                doc.metadata["date"] = m.group(1)
+            else:
+                # Try fuzzy parsing for other date formats
+                try:
+                    dt = _parse_date(doc.content, fuzzy=True)
+                    # Only accept reasonable years
+                    if dt.year and dt.year >= 1900:
+                        doc.metadata["date"] = dt.date().isoformat()
+                except Exception:
+                    pass
 
     # Post-ingest quality checks on chunk sizes
     if quality_checks:

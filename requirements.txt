@@ -17,4 +17,5 @@ rank-bm25>=0.2.2
 # Development and testing
 pytest>=6.0
 flask
+python-dateutil>=2.8
 sentence-transformers
