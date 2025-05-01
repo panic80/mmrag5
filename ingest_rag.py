@@ -42,6 +42,7 @@ from typing import Iterable, List, Sequence
 
 import click
 from tqdm.auto import tqdm
+import re
 # deterministic UUID generation does not require hashlib
 
 # Optional dependencies – import lazily so that the error message is clearer.
@@ -105,6 +106,75 @@ def chunk_text(text: str, max_chars: int) -> list[str]:
         if chunk:
             chunks.append(chunk)
         start = end
+    return chunks
+    
+def _smart_chunk_text(text: str, max_chars: int, overlap: int = 0) -> list[str]:
+    """
+    Chunk text on paragraph and sentence boundaries up to max_chars,
+    and apply character-level overlap between chunks.
+    """
+    # Split into paragraphs
+    paragraphs = re.split(r'\n\s*\n', text)
+    chunks: list[str] = []
+    current_paras: list[str] = []
+    current_len = 0
+    for para in paragraphs:
+        p = para.strip()
+        if not p:
+            continue
+        # If paragraph itself is too long, split by sentences
+        if len(p) > max_chars:
+            # flush existing
+            if current_paras:
+                chunk = "\n\n".join(current_paras).strip()
+                if chunk:
+                    chunks.append(chunk)
+                current_paras = []
+                current_len = 0
+            # split paragraph into sentences
+            sentences = re.split(r'(?<=[\.!?])\s+', p)
+            curr = ""
+            for sent in sentences:
+                s = sent.strip()
+                if not s:
+                    continue
+                if len(curr) + len(s) <= max_chars:
+                    curr = f"{curr} {s}".strip() if curr else s
+                else:
+                    if curr:
+                        chunks.append(curr)
+                    curr = s
+            if curr:
+                chunks.append(curr)
+        else:
+            # Add paragraph to current group
+            if current_len + len(p) + 2 <= max_chars:
+                current_paras.append(p)
+                current_len += len(p) + 2
+            else:
+                # flush existing
+                chunk = "\n\n".join(current_paras).strip()
+                if chunk:
+                    chunks.append(chunk)
+                current_paras = [p]
+                current_len = len(p) + 2
+    # flush remainder
+    if current_paras:
+        chunk = "\n\n".join(current_paras).strip()
+        if chunk:
+            chunks.append(chunk)
+    # apply overlap (character-level)
+    if overlap > 0 and len(chunks) > 1:
+        overlapped: list[str] = []
+        for idx, chunk in enumerate(chunks):
+            if idx == 0:
+                overlapped.append(chunk)
+            else:
+                prev = overlapped[idx-1]
+                # take last overlap chars from previous chunk
+                ov = prev[-overlap:] if len(prev) >= overlap else prev
+                overlapped.append(f"{ov} {chunk}")
+        return overlapped
     return chunks
 
 
@@ -193,7 +263,8 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
             splitter = TextSplitter.from_model(model="gpt-4.1-mini", chunk_size=chunk_size, chunk_overlap=overlap)
             chunks = splitter.split(text)
         except Exception:
-            chunks = chunk_text(text, chunk_size)
+            # Fallback to smarter paragraph/sentence chunking with overlap
+            chunks = _smart_chunk_text(text, chunk_size, overlap)
         for idx, chunk in enumerate(chunks):
             new_meta = dict(metadata)
             new_meta["chunk_index"] = idx
@@ -238,7 +309,8 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
             click.echo(f"[fatal] Could not read source '{source}': {e}", err=True)
             sys.exit(1)
 
-        text_chunks = chunk_text(full_text, chunk_size)
+        # Chunk with smarter boundaries and overlap
+        text_chunks = _smart_chunk_text(full_text, chunk_size, overlap)
         return [
             Document(content=chunk, metadata={"source": source, "chunk_index": idx})
             for idx, chunk in enumerate(text_chunks)
@@ -275,7 +347,8 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
             except Exception as e2:
                 click.echo(f"[fatal] Could not read source '{source}': {e2}", err=True)
                 sys.exit(1)
-            chunks = chunk_text(full_text, chunk_size)
+            # Chunk with smarter boundaries and overlap
+            chunks = _smart_chunk_text(full_text, chunk_size, overlap)
             return [Document(content=chunk, metadata={"source": source, "chunk_index": idx})
                     for idx, chunk in enumerate(chunks)]
 

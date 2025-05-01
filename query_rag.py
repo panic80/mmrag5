@@ -60,6 +60,8 @@ from ingest_rag import get_openai_client
 @click.option("--alpha", type=float, default=0.5, show_default=True, help="Weight for vector scores in hybrid fusion (0.0-1.0).")
 @click.option("--bm25-top", type=int, default=None, help="Number of top BM25 docs to consider (default: k).")
 @click.option("--rrf-k", type=float, default=60.0, show_default=True, help="Reciprocal Rank Fusion k hyperparameter.")
+@click.option("--rerank-top", type=int, default=0, show_default=True,
+              help="Number of top retrieval results to re-rank using a cross-encoder (requires sentence-transformers).")
 @click.option("--filter", "-f", "filters", multiple=True, help="Filter by payload key=value. Can be used multiple times.")
 @click.argument("query", nargs=-1, required=True)
 def main(
@@ -79,6 +81,7 @@ def main(
     alpha: float,
     bm25_top: int | None,
     rrf_k: float,
+    rerank_top: int,
     filters: Sequence[str],
     query: Sequence[str],
 ) -> None:
@@ -278,6 +281,33 @@ def main(
         # `scored` list coming from the pure‑vector Qdrant search so that the
         # rest of the pipeline (answer generation, summaries, etc.) continues
         # to function as expected.
+    # Cross-encoder re-ranking if requested
+    if rerank_top and rerank_top > 0:
+        # Re-order top results using a cross-encoder model
+        try:
+            from sentence_transformers import CrossEncoder
+        except ImportError:
+            click.echo(
+                "[fatal] sentence-transformers is required for --rerank-top (pip install sentence-transformers)",
+                err=True,
+            )
+            sys.exit(1)
+        # Load a default cross-encoder model
+        click.echo(f"[info] Re-ranking top {rerank_top} results with cross-encoder...")
+        ce = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+        # Select initial candidates
+        n_rerank = min(rerank_top, len(scored))
+        candidates = scored[:n_rerank]
+        # Prepare (query, passage) pairs for scoring
+        pairs = [
+            (query_text, (getattr(p, 'payload', {}) or {}).get("chunk_text", ""))
+            for p in candidates
+        ]
+        # Predict relevance scores and sort
+        rerank_scores = ce.predict(pairs)
+        idxs = sorted(range(n_rerank), key=lambda i: rerank_scores[i], reverse=True)
+        # Rebuild scored list in reranked order
+        scored = [candidates[i] for i in idxs]
 
     # Handle no matches
     if not scored:
