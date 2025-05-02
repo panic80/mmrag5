@@ -110,7 +110,9 @@ def _mmr_rerank(points: list[Any], mmr_lambda: float) -> list[Any]:
 @click.option("--rerank-top", type=int, default=0, show_default=True,
               help="Number of top retrieval results to re-rank using a cross-encoder (requires sentence-transformers).")
 @click.option("--mmr-lambda", type=float, default=0.5, show_default=True,
-              help="MMR diversity parameter (lambda: 0=full diversity, 1=full relevance). Always applied by default.")
+              help="MMR diversity parameter (lambda: 0=full diversity, 1=full relevance). Used when deep search is enabled.")
+@click.option("--deepsearch/--no-deepsearch", is_flag=True, default=False,
+              help="Enable deep search (MMR re-ranking) for more diverse retrieval. Disabled by default.")
 @click.option("--filter", "-f", "filters", multiple=True, help="Filter by payload key=value. Can be used multiple times.")
 @click.argument("query", nargs=-1, required=True)
 def main(
@@ -132,6 +134,7 @@ def main(
     rrf_k: float,
     rerank_top: int,
     mmr_lambda: float,
+    deepsearch: bool,
     filters: Sequence[str],
     query: Sequence[str],
 ) -> None:
@@ -342,13 +345,13 @@ def main(
         # `scored` list coming from the pure‑vector Qdrant search so that the
         # rest of the pipeline (answer generation, summaries, etc.) continues
         # to function as expected.
-    # MMR re-ranking for diversity + relevance
-    try:
-        if mmr_lambda is not None:
+    # MMR re-ranking for diversity + relevance (deep search)
+    if deepsearch:
+        try:
             click.echo(f"[info] Applying MMR re-ranking (lambda={mmr_lambda})...")
             scored = _mmr_rerank(scored, mmr_lambda)
-    except Exception as e:
-        click.echo(f"[warning] MMR re-ranking failed: {e}", err=True)
+        except Exception as e:
+            click.echo(f"[warning] MMR re-ranking failed: {e}", err=True)
     # Cross-encoder re-ranking if requested
     if rerank_top and rerank_top > 0:
         # Re-order top results using a cross-encoder model

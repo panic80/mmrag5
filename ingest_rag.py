@@ -207,74 +207,206 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
     yields, we keep its raw representation as the ``payload`` (metadata), and
     attempt to locate a reasonable textual representation for embedding.
     """
-    # If source is a URL, download pages and let docling parse HTML uniformly
-    if source.lower().startswith(("http://", "https://")):
-        import requests
-        import tempfile
-        import os
-        from bs4 import BeautifulSoup
-        from urllib.parse import urlparse, urljoin
+    # ---------------------------------------------------------------------
+    # Helper: chunk arbitrary raw *text* into smaller passages.  We keep the
+    # helper nested so it can implicitly capture the *chunk_size* / *overlap*
+    # parameters from the enclosing ``load_documents`` call, but we define it
+    # right at the beginning of the function so that every subsequent code
+    # path can freely reference it.
+    # ---------------------------------------------------------------------
 
-        root_domain = urlparse(source).netloc
-        visited: set[str] = set()
-        def _crawl(url: str, depth: int) -> List[Document]:
-            if url in visited:
-                return []
-            visited.add(url)
-            try:
-                resp = requests.get(url, timeout=60)
-                resp.raise_for_status()
-            except Exception as e:
-                click.echo(f"[warning] Failed to fetch URL '{url}': {e}", err=True)
-                return []
-            # Save HTML to a temp file for docling extraction
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".html")
-            tmp.write(resp.content)
-            tmp_path = tmp.name
-            tmp.close()
-            # Use docling extractor + chunker on the file
-            try:
-                docs = load_documents(tmp_path, chunk_size, overlap, crawl_depth=0)
-            except Exception as e:
-                click.echo(f"[warning] docling processing failed for '{url}': {e}", err=True)
-                docs = []
-            finally:
-                try:
-                    os.remove(tmp_path)
-                except Exception:
-                    pass
-            # Recurse for links if desired
-            if depth > 0:
-                soup = BeautifulSoup(resp.text, "html.parser")
-                for a in soup.find_all("a", href=True):
-                    href = a["href"]
-                    full = urljoin(url, href)
-                    p = urlparse(full)
-                    if p.scheme not in ("http", "https") or p.netloc != root_domain:
-                        continue
-                    if p.path.startswith("/u/") or p.path.startswith("/c/"):
-                        continue
-                    docs.extend(_crawl(full, depth - 1))
-            return docs
-        return _crawl(source, crawl_depth)
-
-
-    # Try docling extract to get raw text, then chunk by tokens (fallback to char-chunks)
     def _chunk_text_tokenwise(text: str, metadata: dict[str, object]) -> List[Document]:
+        """Split *text* into token-aware chunks, falling back to character
+        splitting if the preferred tokenisers are unavailable.  A small helper
+        that always returns a ``List[Document]`` with a ``chunk_index``
+        injected into the copied *metadata* for downstream processing."""
+
         docs_out: list[Document] = []
-        # Token-based splitting; fall back to char-based
+
+        # 1. Try docling's GPT-aware splitter.
         try:
             from docling.text import TextSplitter
-            splitter = TextSplitter.from_model(model="gpt-4.1-mini", chunk_size=chunk_size, chunk_overlap=overlap)
-            chunks = splitter.split(text)
+
+            splitter = TextSplitter.from_model(  # type: ignore[attr-defined]
+                model="gpt-4.1-mini",
+                chunk_size=chunk_size,
+                chunk_overlap=overlap,
+            )
+            chunks = splitter.split(text)  # type: ignore[attr-defined]
         except Exception:
-            # Fallback to smarter paragraph/sentence chunking with overlap
-            chunks = _smart_chunk_text(text, chunk_size, overlap)
+            # 2. Try LangChain's recursive character splitter.
+            try:
+                from langchain.text_splitter import RecursiveCharacterTextSplitter  # type: ignore
+
+                lc_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=chunk_size,
+                    chunk_overlap=overlap,
+                    separators=["\n\n", "\n", " "],
+                )
+                chunks = lc_splitter.split_text(text)
+            except Exception:
+                # 3. Absolute last-ditch fallback – a very dumb char splitter.
+                chunks = _smart_chunk_text(text, chunk_size, overlap)
+
         for idx, chunk in enumerate(chunks):
             new_meta = dict(metadata)
             new_meta["chunk_index"] = idx
             docs_out.append(Document(content=chunk, metadata=new_meta))
+
         return docs_out
+
+    # ------------------------------------------------------------------
+    # If *source* is a URL, prefer the unstructured/LangChain loader.
+    # ------------------------------------------------------------------
+
+    if source.lower().startswith(("http://", "https://")):
+        # Attempt LangChain UnstructuredURLLoader
+        try:
+            # ------------------------------------------------------------------
+            # LangChain split up into *langchain* (core) and *langchain-community*.
+            # The URL loader we need was moved to the latter.  We therefore try
+            # the new location first, then fall back to the pre-split paths so
+            # that older installations remain compatible.
+            # ------------------------------------------------------------------
+
+            try:  # New ≥0.1.0 structure
+                from langchain_community.document_loaders import (  # type: ignore
+                    UnstructuredURLLoader,
+                )
+
+            except ImportError:
+                try:  # Legacy structure (≤0.0.x)
+                    from langchain.document_loaders import UnstructuredURLLoader  # type: ignore
+                except ImportError:
+                    from langchain.document_loaders.unstructured_url import (  # type: ignore
+                        UnstructuredURLLoader,
+                    )
+
+            loader = UnstructuredURLLoader(urls=[source])
+            raw_docs = loader.load()
+            documents: list[Document] = []
+            for raw in raw_docs:
+                text = raw.page_content
+                meta = raw.metadata or {}
+                documents.extend(_chunk_text_tokenwise(text, meta))
+            return documents
+        except ImportError:
+            click.echo(
+                "[warning] langchain or UnstructuredURLLoader not available; cannot load URL."
+                " Please install langchain and unstructured.",
+                err=True,
+            )
+        except Exception as e:
+            click.echo(f"[warning] LangChain URL load failed for '{source}': {e}", err=True)
+        # Fallback: Unstructured.io partition of remote HTML
+        try:
+            import requests, tempfile, os as _os
+            from unstructured.partition.html import partition_html
+            from unstructured.documents.elements import Table
+            # Fetch remote HTML
+            resp = requests.get(source, timeout=60)
+            resp.raise_for_status()
+            # Write to temp file
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".html")
+            tmp_path = tmp.name
+            tmp.write(resp.content)
+            tmp.close()
+            # Partition HTML into elements
+            elements = partition_html(tmp_path)
+            docs_url: list[Document] = []
+            for elem in elements:
+                if isinstance(elem, Table):
+                    try:
+                        md = elem.to_markdown()
+                    except Exception:
+                        md = elem.get_text()
+                    docs_url.append(Document(content=md, metadata={"source": source, "is_table": True}))
+                elif hasattr(elem, 'text') and isinstance(elem.text, str):
+                    txt = elem.text
+                    docs_url.extend(_chunk_text_tokenwise(txt, {"source": source}))
+            try:
+                _os.remove(tmp_path)
+            except Exception:
+                pass
+            return docs_url
+        except Exception as e2:
+            click.echo(f"[warning] Unstructured URL fallback failed: {e2}", err=True)
+        # Fallback to generic extractor
+
+        # If source is a local PDF, use Unstructured.io for layout-aware parsing with fallback
+    if os.path.isfile(source):
+        ext = os.path.splitext(source)[1].lower()
+        # PDF parsing
+        if ext == '.pdf':
+            try:
+                from unstructured.partition.pdf import partition_pdf
+                from unstructured.documents.elements import Table
+                elements = partition_pdf(source)
+                docs_pdf: list[Document] = []
+                for elem in elements:
+                    if isinstance(elem, Table):
+                        try:
+                            md = elem.to_markdown()
+                        except Exception:
+                            md = elem.get_text()
+                        docs_pdf.append(Document(content=md, metadata={"source": source, "is_table": True}))
+                    elif hasattr(elem, 'text') and isinstance(elem.text, str):
+                        txt = elem.text
+                        docs_pdf.extend(_chunk_text_tokenwise(txt, {"source": source}))
+                return docs_pdf
+            except Exception as e:
+                click.echo(f"[warning] Unstructured PDF parse failed for '{source}': {e}", err=True)
+                # Fallback: plain-text chunking
+                try:
+                    import io, os as _os
+                    from unstructured.partition.text import partition_text
+                    text_elems = partition_text(source)
+                    texts = [e.text for e in text_elems if hasattr(e, 'text')]
+                    return [d for t in texts for d in _chunk_text_tokenwise(t, {"source": source})]
+                except Exception:
+                    # Final fallback: read raw text
+                    try:
+                        with open(source, 'r', encoding='utf-8', errors='ignore') as fh:
+                            full_text = fh.read()
+                        return [Document(content=chunk, metadata={"source": source, "chunk_index": idx})
+                                for idx, chunk in enumerate(_smart_chunk_text(full_text, chunk_size, overlap))]
+                    except Exception:
+                        pass
+        # HTML parsing
+        if ext in ('.html', '.htm'):
+            try:
+                from unstructured.partition.html import partition_html
+                from unstructured.documents.elements import Table
+                elements = partition_html(source)
+                docs_html: list[Document] = []
+                for elem in elements:
+                    if isinstance(elem, Table):
+                        try:
+                            md = elem.to_markdown()
+                        except Exception:
+                            md = elem.get_text()
+                        docs_html.append(Document(content=md, metadata={"source": source, "is_table": True}))
+                    elif hasattr(elem, 'text') and isinstance(elem.text, str):
+                        txt = elem.text
+                        docs_html.extend(_chunk_text_tokenwise(txt, {"source": source}))
+                return docs_html
+            except Exception as e:
+                click.echo(f"[warning] Unstructured HTML parse failed for '{source}': {e}", err=True)
+                # Fallback: read raw HTML text
+                try:
+                    from bs4 import BeautifulSoup
+                    with open(source, 'r', encoding='utf-8', errors='ignore') as fh:
+                        soup = BeautifulSoup(fh, 'html.parser')
+                    text = soup.get_text(separator='\n')
+                    return [Document(content=chunk, metadata={"source": source, "chunk_index": idx})
+                            for idx, chunk in enumerate(_smart_chunk_text(text, chunk_size, overlap))]
+                except Exception:
+                    pass
+
+
+    # Try docling extract to get raw text, then chunk by tokens (fallback to char-chunks)
+    # (definition moved to top of function so that it can be referenced from
+    # earlier code paths – see above.)
 
     try:
         try:

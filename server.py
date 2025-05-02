@@ -46,14 +46,26 @@ def handle_slash():
         generic_token = os.environ.get("SLASH_TOKEN")
         inject_token = os.environ.get("SLASH_TOKEN_INJECT", generic_token)
         ask_token = os.environ.get("SLASH_TOKEN_ASK", generic_token)
-        # Pick the expected token; alias 'injest' to same as 'inject'
+        # Pick the expected token; alias 'injest' to same as 'inject'.
         if cmd_name in ("inject", "injest"):
             expected_token = inject_token
         elif cmd_name == "ask":
             expected_token = ask_token
         else:
             expected_token = generic_token
-        if expected_token and req_token != expected_token:
+        # ------------------------------------------------------------------
+        # Harden token validation
+        # ------------------------------------------------------------------
+
+        # 1. Refuse the request outright if *no* token is configured for the
+        #    invoked command – this prevents accidentally exposing the
+        #    endpoint when the admin forgot to set the environment variable.
+        if not expected_token:
+            # Service unavailable until the administrator configures a token.
+            return jsonify({"text": "slash token not set"}), 503
+
+        # 2. Explicitly reject mismatching tokens.
+        if req_token != expected_token:
             return jsonify({"text": "Invalid token."}), 403
 
         # 'ask' triggers a RAG query

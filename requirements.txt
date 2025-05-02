@@ -14,6 +14,11 @@ docling-core>=2.27
 pdfminer.six>=20201018
 rank-bm25>=0.2.2
 
+# Layout-aware parsing and advanced chunking
+unstructured>=0.6
+langchain>=0.0.200
+langchain-community>=0.0.30
+
 # Development and testing
 pytest>=6.0
 flask
