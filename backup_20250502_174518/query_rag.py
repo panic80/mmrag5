@@ -115,9 +115,9 @@ def _mmr_rerank(points: list[Any], mmr_lambda: float) -> list[Any]:
               help="Enable deep search (MMR re-ranking) for more diverse retrieval. Disabled by default.")
 @click.option("--filter", "-f", "filters", multiple=True, help="Filter by payload key=value. Can be used multiple times.")
 @click.option(
-    "--use-expansion/--no-use-expansion",
+    "--use-expansion",
     is_flag=True,
-    default=True,
+    default=False,
     show_default=True,
     help="Enable query expansion for better recall (requires advanced_rag).",
 )

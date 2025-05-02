@@ -22,27 +22,29 @@ def handle_slash():
     if request.path == "/" and request.method == "GET":
         return jsonify({"status": "ok"}), 200
     try:
-        # Mattermost will send either GET?text=... or POST form text=...
-        if request.method == "GET":
-            text = request.args.get("text", "")
-        else:
-            text = request.form.get("text", "")
-        # DEBUG: log incoming request values for debugging trigger and params
-        app.logger.info(f"Slash command hit: path={request.path}, values={request.values.to_dict()}, form={request.form.to_dict()}")
+        # Parse incoming payload (JSON or form)
+        payload = request.get_json(silent=True) or request.values
+        # Extract text parameter
+        text = payload.get("text", "")
+        # DEBUG: log incoming request values
+        try:
+            app.logger.info(f"Slash command hit: path={request.path}, payload={payload}")
+        except Exception:
+            pass
         # Context for asynchronous replies
-        response_url = request.values.get("response_url")  # Slack-style callback URL
-        channel_id = request.values.get("channel_id")      # Mattermost channel ID
+        response_url = payload.get("response_url")
+        channel_id = payload.get("channel_id")
         mattermost_url = os.environ.get("MATTERMOST_URL")  # e.g. https://your-mattermost-server
         mattermost_token = os.environ.get("MATTERMOST_TOKEN")
         # (Using Personal Access Token for Mattermost REST API)
 
         # Determine which slash command was invoked and validate its token
-        trigger = request.values.get("command") or request.values.get("trigger_word") or ""
+        trigger = payload.get("command") or payload.get("trigger_word") or ""
         trigger = trigger.strip()
         cmd_name = trigger.lstrip("/").lower()
 
         # Validate slash-command token (supporting per-command overrides)
-        req_token = request.values.get("token")
+        req_token = payload.get("token")
         generic_token = os.environ.get("SLASH_TOKEN")
         inject_token = os.environ.get("SLASH_TOKEN_INJECT", generic_token)
         ask_token = os.environ.get("SLASH_TOKEN_ASK", generic_token)
@@ -76,9 +78,16 @@ def handle_slash():
             # Build command
             args = shlex.split(text)
             cmd = ["python3", "-m", "query_rag"]
+            
+            # Add the --use-expansion flag by default if not explicitly specified
+            if not any(arg == "--use-expansion" or arg == "--no-use-expansion" for arg in args):
+                cmd.append("--use-expansion")
+                
+            # Add Qdrant URL if available
             qdrant_url = os.environ.get("QDRANT_URL")
             if qdrant_url and not any(arg.startswith("--qdrant-url") for arg in args):
                 cmd += ["--qdrant-url", qdrant_url]
+                
             cmd += args
             # Asynchronous execution
             def run_and_post():
@@ -143,8 +152,10 @@ def handle_slash():
             import shlex
             def run_inject():
                 import requests
+                import shlex
                 import uuid
                 import os
+                import sys
                 import tempfile
                 import urllib.parse
                 from ingest_rag import get_openai_client, load_documents, embed_and_upsert, ensure_collection
@@ -174,18 +185,27 @@ def handle_slash():
 
                 try:
                     args = shlex.split(text or "")
+                    # Default parallel upsert workers
+                    parallel_var = 15
                     # Parse slash-command flags for injection
+                    # Known flags: parallel, chunk-size, chunk-overlap, crawl-depth,
+                    # purge, collection, generate-summaries, quality-checks
                     chunk_size_var = 500
                     chunk_overlap_var = 50
                     crawl_depth_var = 0
                     clean_args: list[str] = []
-                    i = 0
-                    # Parse slash-command flags for injection
-                    # Known flags: chunk-size, chunk-overlap, crawl-depth, purge, collection,
-                    # generate-summaries, quality-checks
                     gen_summaries_flag = False
                     qc_flag = False
+                    i = 0
                     while i < len(args):
+                        # Parallel upsert workers
+                        if args[i] == "--parallel" and i + 1 < len(args):
+                            try:
+                                parallel_var = int(args[i+1])
+                            except ValueError:
+                                pass
+                            i += 2
+                            continue
                         # Chunking parameters
                         if args[i] == "--chunk-size" and i + 1 < len(args):
                             try:
@@ -216,11 +236,13 @@ def handle_slash():
                         elif args[i] == "--no-generate-summaries":
                             gen_summaries_flag = False
                             i += 1
-                        # Quality-check flags
-                        elif args[i] == "--quality-checks":
+                        # Quality-check flags - handle common typos
+                        elif args[i] in ("--quality-checks", "--quality-check", "--qualith-checks", "--qualty-checks"):
                             qc_flag = True
+                            if args[i] != "--quality-checks":
+                                post(f"Note: Interpreted '{args[i]}' as '--quality-checks'")
                             i += 1
-                        elif args[i] == "--no-quality-checks":
+                        elif args[i] in ("--no-quality-checks", "--no-quality-check"):
                             qc_flag = False
                             i += 1
                         else:
@@ -308,17 +330,29 @@ def handle_slash():
                             sources = [tmp_path]
                         # Run ingest_rag CLI for each source
                         for src in sources:
-                            cmd = ["python3", "-m", "ingest_rag", "--source", src, "--collection", collection,
+                            # Invoke the ingest_rag CLI using the same Python interpreter
+                            cmd = [sys.executable, "-u", "-m", "ingest_rag", "--source", src, "--collection", collection,
                                    "--chunk-size", str(chunk_size_var), "--chunk-overlap", str(chunk_overlap_var),
                                    "--crawl-depth", str(crawl_depth_var)]
+                            
+                            # Check if we should add the generate-summaries flag
                             if gen_summaries_flag:
-                                cmd.append("--generate-summaries")
+                                # Check if OPENAI_API_KEY is valid - if not, skip summaries
+                                openai_key = os.environ.get("OPENAI_API_KEY")
+                                if not openai_key or len(openai_key.strip()) < 10:
+                                    post("[warning] OPENAI_API_KEY is missing or invalid - skipping summary generation")
+                                else:
+                                    cmd.append("--generate-summaries")
+                            
+                            # Add quality checks flag
                             if qc_flag:
                                 cmd.append("--quality-checks")
                             # pass Qdrant URL from env if set
                             qurl = os.environ.get("QDRANT_URL")
                             if qurl and not any(a.startswith("--qdrant-url") for a in cmd):
                                 cmd.extend(["--qdrant-url", qurl])
+                            # pass parallel worker count
+                            cmd.extend(["--parallel", str(parallel_var)])
                             # Execute and stream output
                             try:
                                 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -357,9 +391,7 @@ def handle_slash():
                                 headers=hdrs,
                             )
                             if resp_ct.status_code != 200:
-                                post(
-                                    f"❌ Error fetching posts: {resp_ct.status_code} {resp_ct.text}"
-                                )
+                                post(f"❌ Error fetching posts: {resp_ct.status_code} {resp_ct.text}")
                                 return
 
                             data_ct = resp_ct.json()
@@ -382,59 +414,50 @@ def handle_slash():
                             post("No messages to ingest – channel is empty.")
                             return
 
-                        # 2. Dump the transcript to a temporary file so that we can
-                        #    delegate rich extraction / chunking to docling via
-                        #    `load_documents()`.
-                        import tempfile, os as _os
+                        # Ingest the current channel transcript using the ingest_rag CLI
+                        import tempfile as _tempfile, os as _os, shlex
 
-                        with tempfile.NamedTemporaryFile(mode="w+", suffix=".txt", delete=False) as tmp_fp:
-                            tmp_path = tmp_fp.name
-                            tmp_fp.write("\n".join(m.rstrip("\n") for m in msgs))
+                        # Dump the transcript to a temporary file
+                        tmp = _tempfile.NamedTemporaryFile(mode="w+", suffix=".txt", delete=False)
+                        tmp_path = tmp.name
+                        tmp.write("\n".join(m.rstrip("\n") for m in msgs))
+                        tmp.close()
 
-                        # 3. Let `load_documents()` (docling) do the heavy lifting.
+                        # Build the ingestion command
+                        # Invoke the ingest_rag CLI on the channel transcript
+                        cmd = [
+                            sys.executable, "-u", "-m", "ingest_rag",
+                            "--source", tmp_path,
+                            "--collection", collection,
+                            "--chunk-size", str(chunk_size_var),
+                            "--chunk-overlap", str(chunk_overlap_var),
+                            "--crawl-depth", str(crawl_depth_var),
+                        ]
+                        # Include Qdrant URL if provided
+                        qurl = os.environ.get("QDRANT_URL")
+                        if qurl and not any(a.startswith("--qdrant-url") for a in cmd):
+                            cmd.extend(["--qdrant-url", qurl])
+                        # Include parallel worker count
+                        cmd.extend(["--parallel", str(parallel_var)])
+
+                        # Execute and stream output
                         try:
-                            try:
-                                docs_temp = load_documents(tmp_path, chunk_size=chunk_size_var, overlap=chunk_overlap_var)
-                            except BaseException:
-                                # Fallback: cheap whitespace splitter as a last resort
-                                from ingest_rag import chunk_text as _chunk_text, Document as _Document
+                            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                        except Exception as e:
+                            post(f"❌ Failed to start ingestion subprocess: {e}")
+                            return
+                        if proc.stdout:
+                            for line in proc.stdout:
+                                post(line.rstrip())
+                        ret = proc.wait()
+                        if ret != 0:
+                            post(f"❌ Ingestion subprocess exited with code {ret}")
 
-                                docs_temp = []
-                                for idx, chunk in enumerate(_chunk_text("\n".join(msgs), max_chars=500)):
-                                    docs_temp.append(_Document(content=chunk, metadata={"chunk_index": idx}))
-                        finally:
-                            try:
-                                _os.remove(tmp_path)
-                            except FileNotFoundError:
-                                pass
-
-                        # 4. Enrich each Document with Mattermost‑specific metadata
-                        from ingest_rag import Document as _Doc
-
-                        docs: list[_Doc] = []
-                        for g_idx, doc in enumerate(docs_temp):
-                            meta = doc.metadata.copy()
-                            meta.setdefault("source_channel", channel_id)
-                            # Best‑effort mapping back to original message index – useful
-                            # for traceability when showing snippets.
-                            meta.setdefault("message_index", g_idx)
-                            docs.append(_Doc(content=doc.content, metadata=meta))
-
-                        total_chunks = len(docs)
-                        # Report chunking completion
-                        post(f"Chunked channel into {total_chunks} chunk(s) from {len(msgs)} messages.")
-                        # Begin embedding of channel chunks
-                        post(f"Embedding & upserting {total_chunks} chunks into '{collection}'...")
-                        embed_and_upsert(
-                            client,
-                            collection,
-                            docs,
-                            openai_client,
-                            batch_size=16,
-                            deterministic_id=True,
-                        )
-                        # Report ingestion complete for channel
-                        post(f"✅ Ingested {total_chunks} chunks from {len(msgs)} messages into '{collection}'.")
+                        # Cleanup temporary file
+                        try:
+                            _os.remove(tmp_path)
+                        except OSError:
+                            pass
                         return
 
                     # Ingest provided sources
@@ -466,19 +489,43 @@ def handle_slash():
                                 local_src = source
                         # Initial status: crawling and collecting chunks for this source
                         post(f"[{idx}/{total_sources}] Fetching and chunking '{source}' (depth={crawl_depth_var})...")
-                        # Get all chunks (may include multiple pages)
-                        docs = load_documents(local_src, chunk_size=chunk_size_var, overlap=chunk_overlap_var, crawl_depth=crawl_depth_var)
-                        # Group chunks by originating page URL in metadata
-                        pages: dict[str, list] = {}
-                        for doc in docs:
-                            page = doc.metadata.get("source", source)
-                            pages.setdefault(page, []).append(doc)
+                        
+                        # Enhanced URL loading with better error handling
+                        try:
+                            # Get all chunks (may include multiple pages)
+                            docs = load_documents(local_src, chunk_size=chunk_size_var, overlap=chunk_overlap_var, crawl_depth=crawl_depth_var)
+                            
+                            # Check if any documents were loaded
+                            if not docs:
+                                post(f"⚠️ No documents loaded from '{source}'. This may indicate an issue with the URL or with langchain/unstructured packages.")
+                                post("If this is a URL, make sure langchain and unstructured packages are installed with: pip install langchain langchain-community unstructured")
+                                continue
+                            
+                            post(f"[{idx}/{total_sources}] Successfully loaded {len(docs)} chunks from '{source}'")
+                            
+                            # Group chunks by originating page URL in metadata
+                            pages: dict[str, list] = {}
+                            for doc in docs:
+                                page = doc.metadata.get("source", source)
+                                pages.setdefault(page, []).append(doc)
+                        except Exception as e:
+                            post(f"❌ Failed to load documents from '{source}': {e}")
+                            post("If this is a URL, try installing required packages with: pip install langchain langchain-community unstructured requests bs4")
+                            continue
                         # Process each page separately for visibility
                         for pg_idx, (page_url, pg_docs) in enumerate(pages.items(), start=1):
                             pg_count = len(pg_docs)
                             post(f"[{idx}/{total_sources}] Page {pg_idx}/{len(pages)}: '{page_url}' → {pg_count} chunks")
                             post(f"[{idx}/{total_sources}] Embedding & upserting {pg_count} chunks from page {pg_idx}...")
-                            embed_and_upsert(client, collection, pg_docs, openai_client, batch_size=16, deterministic_id=True)
+                            embed_and_upsert(
+                                client,
+                                collection,
+                                pg_docs,
+                                openai_client,
+                                batch_size=16,
+                                deterministic_id=True,
+                                parallel=parallel_var,
+                            )
                             total_chunks += pg_count
                             post(f"[{idx}/{total_sources}] Done page {pg_idx}: total chunks so far: {total_chunks}")
                         # Cleanup temp PDF
@@ -489,26 +536,79 @@ def handle_slash():
                 except BaseException as e:
                     # Catch SystemExit raised by _lazy_import as well as regular exceptions
                     post(f"❌ Ingestion failed: {e}")
-            # Parse flags early for immediate ack
+            # Parse flags early for immediate handling of purge
             import shlex
             args = shlex.split(text or "")
             purge_flag = "--purge" in args
+            # Determine target collection: override via flag or env var
+            collection = os.environ.get("QDRANT_COLLECTION_NAME", "rag_data")
+            if "--collection" in args:
+                idx = args.index("--collection")
+                if idx + 1 < len(args):
+                    collection = args[idx + 1]
+            elif "-c" in args:
+                idx = args.index("-c")
+                if idx + 1 < len(args):
+                    collection = args[idx + 1]
+            # Handle purge synchronously and return
+            if purge_flag:
+                from qdrant_client import QdrantClient
+                qdrant_url_env = os.environ.get("QDRANT_URL", "http://localhost:6333")
+                qdrant_api_key = os.environ.get("QDRANT_API_KEY")
+                client = QdrantClient(url=qdrant_url_env, api_key=qdrant_api_key)
+                try:
+                    client.delete_collection(collection_name=collection)
+                    msg = f"✅ Purged existing collection '{collection}'."
+                except Exception as e:
+                    msg = f"⚠️ Purge skipped: collection '{collection}' may not exist. ({e})"
+                # Recreate empty collection
+                try:
+                    from ingest_rag import ensure_collection
+                    ensure_collection(client, collection, vector_size=3072)
+                except Exception:
+                    pass
+                return jsonify({"text": msg}), 200
             # Launch ingestion thread and immediately acknowledge
             threading.Thread(target=run_inject, daemon=True).start()
-            # Inform user if purge was requested
-            if purge_flag:
-                # Acknowledge purge-only
-                ack_msg = "Purging existing collection. Progress will be posted shortly."
-            else:
-                ack_msg = "Ingestion started... progress will be posted shortly."
-            return jsonify({"text": ack_msg}), 200
+            return jsonify({"text": "Ingestion started... progress will be posted shortly."}), 200
     except Exception as e:
         import traceback
         traceback.print_exc()
         # Return exception message to Mattermost
         return jsonify({"text": f"Error: {e}"}), 200
 
+def check_url_dependencies():
+    """Check if URL handling dependencies are installed."""
+    missing_deps = []
+    try:
+        import langchain_community
+    except ImportError:
+        missing_deps.append("langchain-community")
+    
+    try:
+        import langchain
+    except ImportError:
+        missing_deps.append("langchain")
+    
+    try:
+        import unstructured
+    except ImportError:
+        missing_deps.append("unstructured")
+    
+    try:
+        import bs4
+    except ImportError:
+        missing_deps.append("bs4")
+    
+    if missing_deps:
+        print("WARNING: Missing packages for URL handling:", ", ".join(missing_deps))
+        print("To install: pip install " + " ".join(missing_deps))
+        print("Without these packages, /inject <URL> may not work properly.")
+    else:
+        print("URL handling dependencies: OK")
+
 if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "5000"))
+    check_url_dependencies()
     app.run(host=host, port=port)

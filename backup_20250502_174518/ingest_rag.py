@@ -50,9 +50,6 @@ from dateutil.parser import parse as _parse_date
 DATE_REGEX = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 # deterministic UUID generation does not require hashlib
 
-# Global flag for fast chunking mode
-_use_fast_chunking = True
-
 # Optional dependencies – import lazily so that the error message is clearer.
 
 
@@ -119,8 +116,6 @@ def chunk_text(text: str, max_chars: int) -> list[str]:
 def _smart_chunk_text(text: str, max_chars: int, overlap: int = 0) -> list[str]:
     """
     Chunk text on paragraph and sentence boundaries up to max_chars,
-    
-    This is the original chunking method, kept as fallback if semantic chunking fails.
     and apply character-level overlap between chunks.
     
     This is the original chunking method, kept as fallback if semantic chunking fails.
@@ -190,7 +185,7 @@ def _smart_chunk_text(text: str, max_chars: int, overlap: int = 0) -> list[str]:
     return chunks
 
 
-def semantic_chunk_text(text: str, max_chars: int, overlap: int = 0, fast_mode: bool = True) -> list[str]:
+def semantic_chunk_text(text: str, max_chars: int, overlap: int = 0) -> list[str]:
     """
     Chunk text based on semantic topic boundaries.
     
@@ -198,26 +193,19 @@ def semantic_chunk_text(text: str, max_chars: int, overlap: int = 0, fast_mode: 
         text: The text to chunk
         max_chars: Maximum character length per chunk
         overlap: Overlap between chunks (not used in semantic chunking)
-        fast_mode: Use faster chunking method (default: True)
         
     Returns:
         List of semantically chunked text segments
     """
     # Import from advanced_rag if available, otherwise fall back to regular chunking
     try:
-        import time
-        start_time = time.time()
-        
         from advanced_rag import semantic_chunk_text as advanced_semantic_chunk
-        mode_str = "FAST" if fast_mode else "PRECISE"
-        click.echo(f"[info] Using {mode_str} semantic chunking from advanced_rag module")
-        
-        chunks = advanced_semantic_chunk(text, max_chars=max_chars, fast_mode=fast_mode)
+        click.echo("[info] Using semantic chunking from advanced_rag module")
+        chunks = advanced_semantic_chunk(text, max_chars=max_chars)
         
         # Verify we got valid chunks
         if chunks and all(isinstance(c, str) for c in chunks):
-            elapsed_time = time.time() - start_time
-            click.echo(f"[info] Semantic chunking produced {len(chunks)} chunks in {elapsed_time:.2f} seconds")
+            click.echo(f"[info] Semantic chunking produced {len(chunks)} chunks")
             return chunks
         else:
             click.echo("[warning] Semantic chunking failed to produce valid chunks, falling back to regular chunking", err=True)
@@ -271,15 +259,15 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
 
         # 1. Try semantic chunking first (from advanced_rag)
         try:
-            # Use semantic chunking with configurable fast mode
-            chunks = semantic_chunk_text(text, chunk_size, overlap, fast_mode=_use_fast_chunking)
-            mode_str = "fast" if _use_fast_chunking else "precise"
-            click.echo(f"[info] Used {mode_str} semantic chunking for text")
+            # Use semantic chunking for better context-aware chunks
+            chunks = semantic_chunk_text(text, chunk_size, overlap)
+            click.echo("[info] Used semantic chunking for text")
         except Exception as e:
             click.echo(f"[warning] Semantic chunking failed, trying fallbacks: {e}", err=True)
             # 2. Try docling's GPT-aware splitter.
             try:
                 from docling.text import TextSplitter
+
                 splitter = TextSplitter.from_model(  # type: ignore[attr-defined]
                     model="gpt-4.1-mini",
                     chunk_size=chunk_size,
@@ -829,8 +817,6 @@ def embed_and_upsert(
 @click.option("--chunk-overlap", type=int, default=50, show_default=True, help="Overlap (tokens) between chunks.")
 @click.option("--crawl-depth", type=int, default=0, show_default=True, help="When SOURCE is a URL, crawl hyperlinks up to this depth (0=no crawl).")
 @click.option("--parallel", type=int, default=15, show_default=True, help="Number of parallel workers for Qdrant upsert.")
-@click.option("--fast-chunking/--precise-chunking", default=True, show_default=True, 
-              help="Use fast heuristic-based semantic chunking (faster) or transformer-based semantic chunking (more precise but much slower).")
 @click.option("--generate-summaries/--no-generate-summaries", default=False, show_default=True,
               help="Generate and index brief summaries of each chunk for multi-granularity retrieval.")
 @click.option("--quality-checks/--no-quality-checks", default=False, show_default=True,
@@ -857,7 +843,6 @@ def cli(
     chunk_overlap: int,
     crawl_depth: int,
     parallel: int,
-    fast_chunking: bool,
     generate_summaries: bool,
     quality_checks: bool,
     bm25_index: str | None,
@@ -913,10 +898,7 @@ def cli(
     # Load documents via docling
     # ---------------------------------------------------------------------
 
-    click.echo(f"[info] Loading documents from source: {source} (chunk_size={chunk_size}, overlap={chunk_overlap}, crawl_depth={crawl_depth}, fast_chunking={fast_chunking})")
-    # Pass fast_chunking to the global scope for use in semantic_chunk_text
-    global _use_fast_chunking
-    _use_fast_chunking = fast_chunking
+    click.echo(f"[info] Loading documents from source: {source} (chunk_size={chunk_size}, overlap={chunk_overlap}, crawl_depth={crawl_depth})")
     documents = load_documents(source, chunk_size, chunk_overlap, crawl_depth)
     click.echo(f"[info] Loaded {len(documents)} document(s)")
 
