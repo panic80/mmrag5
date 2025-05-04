@@ -75,8 +75,12 @@ def handle_slash():
             if not text:
                 return jsonify({"text": "No text provided."}), 400
             import shlex
+            import re
+            # Sanitize input to prevent command injection
+            # Only allow alphanumeric characters, spaces, and a limited set of special characters
+            sanitized_text = re.sub(r'[^a-zA-Z0-9\s\-_\.,:;?!/\'"()\[\]{}]', '', text)
             # Build command
-            args = shlex.split(text)
+            args = shlex.split(sanitized_text)
             cmd = ["python3", "-m", "query_rag"]
             
             # Add the --use-expansion flag by default if not explicitly specified
@@ -87,6 +91,22 @@ def handle_slash():
             qdrant_url = os.environ.get("QDRANT_URL")
             if qdrant_url and not any(arg.startswith("--qdrant-url") for arg in args):
                 cmd += ["--qdrant-url", qdrant_url]
+
+            # Add default collection from environment if not overridden
+            default_coll = os.environ.get("QDRANT_COLLECTION_NAME")
+            if default_coll and not any(arg == "--collection" for arg in args):
+                cmd += ["--collection", default_coll]
+
+            # Add BM25 index JSON if it exists for the collection
+            coll_name = default_coll or "rag_data"
+            bm25_index_file = f"{coll_name}_bm25_index.json"
+            if os.path.exists(bm25_index_file) and not any(arg.startswith("--bm25-index") for arg in args):
+                cmd += ["--bm25-index", bm25_index_file]
+
+
+            # Enable RAG self-evaluation by default
+            if not any(arg == "--evaluate" for arg in args):
+                cmd.append("--evaluate")
                 
             cmd += args
             # Asynchronous execution
@@ -142,7 +162,9 @@ def handle_slash():
                 try:
                     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
                 except Exception as e:
-                    _post_message(f"Failed to start query: {e}")
+                    error_msg = f"Failed to start query: {e}"
+                    app.logger.error(error_msg)
+                    _post_message(error_msg)
                     return
 
                 # Stream subprocess output line by line
@@ -151,42 +173,77 @@ def handle_slash():
                 # (plus minimal context) and post a single tidy message.
                 # -------------------------------------------------------------
                 all_lines: list[str] = []
-                if proc.stdout:
-                    for raw_line in proc.stdout:
-                        all_lines.append(raw_line.rstrip())
+                try:
+                    if proc.stdout:
+                        for raw_line in proc.stdout:
+                            all_lines.append(raw_line.rstrip())
+                except Exception as e:
+                    error_msg = f"Error reading from subprocess: {e}"
+                    app.logger.error(error_msg)
+                    _post_message(error_msg)
+                    # Continue execution to try to get a return code
 
-                # Wait for process termination
-                retcode = proc.wait()
+                # Wait for process termination with timeout
+                try:
+                    retcode = proc.wait(timeout=300)  # 5-minute timeout
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    error_msg = "Query timed out after 5 minutes and was terminated"
+                    app.logger.error(error_msg)
+                    _post_message(error_msg)
+                    return
+                except Exception as e:
+                    error_msg = f"Error waiting for process: {e}"
+                    app.logger.error(error_msg)
+                    _post_message(error_msg)
+                    try:
+                        proc.kill()
+                    except:
+                        pass
+                    return
 
                 # -------------------------------------------------------------
                 # Parse output – look for [answer] or [summary] header produced
                 # by query_rag.py and capture everything that follows it.
                 # -------------------------------------------------------------
-                answer_text = None
-                header_idx = None
-                for idx, ln in enumerate(all_lines):
-                    if ln.strip().lower().startswith("[answer]") or ln.strip().lower().startswith("[summary]"):
-                        header_idx = idx
-                        break
-                if header_idx is not None:
-                    # Take all lines after the header until another header or end
-                    answer_body: list[str] = []
-                    for ln in all_lines[header_idx + 1 :]:
-                        if ln.startswith("["):  # another section starts
+                try:
+                    answer_text = None
+                    header_idx = None
+                    for idx, ln in enumerate(all_lines):
+                        if ln.strip().lower().startswith("[answer]") or ln.strip().lower().startswith("[summary]"):
+                            header_idx = idx
                             break
-                        answer_body.append(ln)
-                    answer_text = "\n".join(answer_body).strip()
+                    if header_idx is not None:
+                        # Take all lines after the header until another header or end
+                        answer_body: list[str] = []
+                        for ln in all_lines[header_idx + 1 :]:
+                            if ln.startswith("["):  # another section starts
+                                break
+                            answer_body.append(ln)
+                        answer_text = "\n".join(answer_body).strip()
 
-                if not answer_text:
-                    # Fallback: use last 20 lines of output
-                    answer_text = "\n".join(all_lines[-20:]).strip()
+                    if not answer_text:
+                        # Fallback: use last 20 lines of output
+                        max_lines = min(20, len(all_lines))
+                        if max_lines > 0:
+                            answer_text = "\n".join(all_lines[-max_lines:]).strip()
+                        else:
+                            answer_text = "No output was generated."
 
-                # Compose final message
-                final_msg = f"**Q:** {text}\n\n**A:**\n{answer_text}"
+                    # Compose final message
+                    final_msg = f"**Q:** {text}\n\n**A:**\n{answer_text}"
 
-                _post_message(final_msg)
-                if retcode != 0:
-                    _post_message(f"Query process exited with code {retcode}")
+                    # Ensure message is not too long for Mattermost
+                    if len(final_msg) > 16000:  # Mattermost has ~16KB max message size
+                        final_msg = final_msg[:16000] + "\n\n[Message truncated due to size limitations]"
+
+                    _post_message(final_msg)
+                    if retcode != 0:
+                        _post_message(f"Query process exited with code {retcode}")
+                except Exception as e:
+                    error_msg = f"Error processing query results: {e}"
+                    app.logger.error(f"{error_msg}\nStack trace:", exc_info=True)
+                    _post_message(error_msg)
             # Always run asynchronously
             threading.Thread(target=run_and_post, daemon=True).start()
             # Immediate acknowledgement
@@ -270,7 +327,10 @@ def handle_slash():
                 # the *finally* block below to post the combined message.
                 # ----------------------------------------------------------
                 try:
-                    args = shlex.split(text or "")
+                    # Sanitize input to prevent command injection
+                    import re
+                    sanitized_text = re.sub(r'[^a-zA-Z0-9\s\-_\.,:;?!/\'"()\[\]{}]', '', text or "")
+                    args = shlex.split(sanitized_text)
                     # Default parallel upsert workers
                     parallel_var = 15
                     # Parse slash-command flags for injection
@@ -338,6 +398,23 @@ def handle_slash():
                         elif args[i] == "--no-rich-metadata":
                             # Skip this flag
                             i += 1
+                        # Handle all our new feature flags
+                        elif args[i] in ("--hierarchical-embeddings", "--no-hierarchical-embeddings", 
+                                        "--entity-extraction", "--no-entity-extraction",
+                                        "--enhance-text-with-entities", "--no-enhance-text-with-entities",
+                                        "--adaptive-chunking", "--no-adaptive-chunking",
+                                        "--deduplication", "--no-deduplication",
+                                        "--merge-duplicates", "--no-merge-duplicates",
+                                        "--validate-ingestion", "--no-validate-ingestion",
+                                        "--run-test-queries", "--no-run-test-queries"):
+                            clean_args.append(args[i])
+                            i += 1
+                        # Handle flags with parameters
+                        elif args[i] in ("--doc-embedding-model", "--section-embedding-model", 
+                                         "--chunk-embedding-model", "--similarity-threshold") and i + 1 < len(args):
+                            clean_args.append(args[i])
+                            clean_args.append(args[i+1])
+                            i += 2
                         else:
                             clean_args.append(args[i])
                             i += 1
@@ -347,7 +424,8 @@ def handle_slash():
                     if "--purge" in args:
                         purge = True
                         args = [a for a in args if a != "--purge"]
-                    collection = "rag_data"
+                    # Default collection name (use QDRANT_COLLECTION_NAME if set)
+                    collection = os.environ.get("QDRANT_COLLECTION_NAME", "rag_data")
                     # Handle collection override
                     if "--collection" in args:
                         idx = args.index("--collection")
@@ -418,9 +496,14 @@ def handle_slash():
                             if not msgs:
                                 post("No messages to ingest – channel is empty.")
                                 return
-                            tmp = tempfile.NamedTemporaryFile(mode="w+", suffix=".txt", delete=False)
-                            tmp_path = tmp.name; tmp.write("\n".join(m.rstrip("\n") for m in msgs)); tmp.close()
-                            sources = [tmp_path]
+                            tmp_path = None
+                            try:
+                                tmp = tempfile.NamedTemporaryFile(mode="w+", suffix=".txt", delete=False)
+                                tmp_path = tmp.name; tmp.write("\n".join(m.rstrip("\n") for m in msgs)); tmp.close()
+                                sources = [tmp_path]
+                            except Exception as e:
+                                post(f"❌ Failed to create temporary file: {e}")
+                                return
                         # Run ingest_rag CLI for each source
                         for src in sources:
                             # Invoke the ingest_rag CLI using the same Python interpreter
@@ -449,6 +532,24 @@ def handle_slash():
                                 # Add it right after the source parameter
                                 src_idx = cmd.index("--source") + 2
                                 cmd.insert(src_idx, "--rich-metadata")
+                            
+                            # Add our new feature flags if they exist in clean_args
+                            for flag in ["--adaptive-chunking", "--hierarchical-embeddings", 
+                                        "--entity-extraction", "--enhance-text-with-entities",
+                                        "--deduplication", "--merge-duplicates",
+                                        "--validate-ingestion", "--run-test-queries"]:
+                                if flag in clean_args:
+                                    cmd.append(flag)
+                            
+                            # Add parameter flags with their values
+                            param_flags = ["--doc-embedding-model", "--section-embedding-model", 
+                                          "--chunk-embedding-model", "--similarity-threshold"]
+                            for flag in param_flags:
+                                if flag in clean_args:
+                                    idx = clean_args.index(flag)
+                                    if idx + 1 < len(clean_args):
+                                        cmd.append(flag)
+                                        cmd.append(clean_args[idx + 1])
                                 
                             # pass Qdrant URL from env if set
                             qurl = os.environ.get("QDRANT_URL")
@@ -468,7 +569,8 @@ def handle_slash():
                             ret = proc.wait()
                             if ret != 0:
                                 post(f"❌ Ingestion subprocess exited with code {ret}")
-                        # Cleanup temp file
+                        
+                        # Cleanup temp file in a separate try-except block
                         if tmp_path:
                             try:
                                 os.remove(tmp_path)
@@ -521,10 +623,15 @@ def handle_slash():
                         import tempfile as _tempfile, os as _os, shlex
 
                         # Dump the transcript to a temporary file
-                        tmp = _tempfile.NamedTemporaryFile(mode="w+", suffix=".txt", delete=False)
-                        tmp_path = tmp.name
-                        tmp.write("\n".join(m.rstrip("\n") for m in msgs))
-                        tmp.close()
+                        tmp_path = None
+                        try:
+                            tmp = _tempfile.NamedTemporaryFile(mode="w+", suffix=".txt", delete=False)
+                            tmp_path = tmp.name
+                            tmp.write("\n".join(m.rstrip("\n") for m in msgs))
+                            tmp.close()
+                        except Exception as e:
+                            post(f"❌ Failed to create temporary file: {e}")
+                            return
 
                         # Build the ingestion command
                         # Invoke the ingest_rag CLI on the channel transcript
@@ -544,6 +651,24 @@ def handle_slash():
                             # Add it right after the source parameter
                             src_idx = cmd.index("--source") + 2
                             cmd.insert(src_idx, "--rich-metadata")
+                        
+                        # Add our new feature flags if they exist in clean_args
+                        for flag in ["--adaptive-chunking", "--hierarchical-embeddings", 
+                                    "--entity-extraction", "--enhance-text-with-entities",
+                                    "--deduplication", "--merge-duplicates",
+                                    "--validate-ingestion", "--run-test-queries"]:
+                            if flag in clean_args:
+                                cmd.append(flag)
+                        
+                        # Add parameter flags with their values
+                        param_flags = ["--doc-embedding-model", "--section-embedding-model", 
+                                      "--chunk-embedding-model", "--similarity-threshold"]
+                        for flag in param_flags:
+                            if flag in clean_args:
+                                idx = clean_args.index(flag)
+                                if idx + 1 < len(clean_args):
+                                    cmd.append(flag)
+                                    cmd.append(clean_args[idx + 1])
                             
                         # Include Qdrant URL if provided
                         qurl = os.environ.get("QDRANT_URL")
@@ -555,21 +680,22 @@ def handle_slash():
                         # Execute and stream output
                         try:
                             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                            if proc.stdout:
+                                for line in proc.stdout:
+                                    post(line.rstrip())
+                            ret = proc.wait()
+                            if ret != 0:
+                                post(f"❌ Ingestion subprocess exited with code {ret}")
                         except Exception as e:
-                            post(f"❌ Failed to start ingestion subprocess: {e}")
-                            return
-                        if proc.stdout:
-                            for line in proc.stdout:
-                                post(line.rstrip())
-                        ret = proc.wait()
-                        if ret != 0:
-                            post(f"❌ Ingestion subprocess exited with code {ret}")
-
-                        # Cleanup temporary file
-                        try:
-                            _os.remove(tmp_path)
-                        except OSError:
-                            pass
+                            post(f"❌ Failed to start or manage ingestion subprocess: {e}")
+                        finally:
+                            # Cleanup temporary file
+                            if tmp_path:
+                                try:
+                                    _os.remove(tmp_path)
+                                except OSError:
+                                    pass
+                        
                         return
 
                     # Filter out the --rich-metadata flag from args before treating them as sources
@@ -585,9 +711,10 @@ def handle_slash():
                             ext = os.path.splitext(parsed.path)[1].lower()
                             # Remote PDF: stream to temp .pdf file
                             if ext == ".pdf":
-                                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
-                                tmp_path = tmp.name; tmp.close()
+                                tmp_path = None
                                 try:
+                                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
+                                    tmp_path = tmp.name; tmp.close()
                                     resp = requests.get(source, stream=True, timeout=60)
                                     resp.raise_for_status()
                                     with open(tmp_path, "wb") as f:
@@ -595,6 +722,12 @@ def handle_slash():
                                             f.write(chunk)
                                     local_src = tmp_path
                                 except Exception as e:
+                                    # Clean up temp file if download fails
+                                    if tmp_path:
+                                        try:
+                                            os.remove(tmp_path)
+                                        except OSError:
+                                            pass
                                     post(f"❌ Download failed: {e}")
                                     return
                             else:
@@ -674,7 +807,8 @@ def handle_slash():
                         if local_src != source:
                             try: os.remove(local_src)
                             except: pass
-                    post(f"Ingested {total_chunks} chunks from {total_sources} source(s) into '{collection}'.")
+                    # Final summary: indicate completion with a checkmark and summary data
+                    post(f"✅ Ingestion complete: {total_chunks} chunks from {total_sources} source(s) into '{collection}'.")
                 except BaseException as e:
                     # Catch SystemExit raised by _lazy_import as well as regular exceptions
                     post(f"❌ Ingestion failed: {e}")
@@ -682,8 +816,10 @@ def handle_slash():
                     # Flush buffered progress lines (success or error)
                     _post_combined()
             # Parse flags early for immediate handling of purge
-            import shlex
-            args = shlex.split(text or "")
+            import shlex, re
+            # Sanitize input to prevent command injection
+            sanitized_text = re.sub(r'[^a-zA-Z0-9\s\-_\.,:;?!/\'"()\[\]{}]', '', text or "")
+            args = shlex.split(sanitized_text)
             purge_flag = "--purge" in args
             # Determine target collection: override via flag or env var
             collection = os.environ.get("QDRANT_COLLECTION_NAME", "rag_data")
@@ -719,8 +855,22 @@ def handle_slash():
     except Exception as e:
         import traceback
         traceback.print_exc()
-        # Return exception message to Mattermost
-        return jsonify({"text": f"Error: {e}"}), 200
+        # Log the full exception with stack trace
+        app.logger.error(f"Fatal error in handler: {e}", exc_info=True)
+        # Return exception message to Mattermost with appropriate error code
+        error_message = f"Error: {e}"
+        if isinstance(e, (ValueError, KeyError, TypeError)):
+            # Client error - Bad Request
+            return jsonify({"text": error_message}), 400
+        elif isinstance(e, PermissionError):
+            # Permission error - Forbidden
+            return jsonify({"text": error_message}), 403
+        elif isinstance(e, FileNotFoundError):
+            # Resource not found
+            return jsonify({"text": error_message}), 404
+        else:
+            # Server error
+            return jsonify({"text": error_message}), 500
 
 def check_url_dependencies():
     """Check if URL handling dependencies are installed."""

@@ -37,8 +37,8 @@ import json
 import os
 import sys
 import uuid
-from dataclasses import asdict, dataclass, field
-from typing import Iterable, List, Sequence
+from dataclasses import dataclass, field
+from typing import Iterable, List, Sequence, Dict, Any, Optional
 
 # Core dependencies
 import click
@@ -190,7 +190,7 @@ def _smart_chunk_text(text: str, max_chars: int, overlap: int = 0) -> list[str]:
     return chunks
 
 
-def semantic_chunk_text(text: str, max_chars: int, overlap: int = 0, fast_mode: bool = True) -> list[str]:
+def semantic_chunk_text(text: str, max_chars: int, overlap: int = 0, fast_mode: bool = True, use_adaptive: bool = False) -> list[str]:
     """
     Chunk text based on semantic topic boundaries.
     
@@ -199,11 +199,45 @@ def semantic_chunk_text(text: str, max_chars: int, overlap: int = 0, fast_mode: 
         max_chars: Maximum character length per chunk
         overlap: Overlap between chunks (not used in semantic chunking)
         fast_mode: Use faster chunking method (default: True)
+        use_adaptive: Use adaptive content-aware chunking (default: False)
         
     Returns:
         List of semantically chunked text segments
     """
-    # Import from advanced_rag if available, otherwise fall back to regular chunking
+    # First try adaptive chunking if enabled
+    # Check both the parameter and the global variable
+    global _adaptive_chunking
+    use_adaptive_chunking = use_adaptive or _adaptive_chunking
+    
+    if use_adaptive_chunking:
+        try:
+            import time
+            start_time = time.time()
+            
+            # Import adaptive chunking module
+            try:
+                from adaptive_chunking import adaptive_chunk_text
+                click.echo(f"[info] Using content-aware adaptive chunking")
+                
+                chunks = adaptive_chunk_text(text, max_chars=max_chars)
+                
+                # Verify we got valid chunks
+                if chunks and all(isinstance(c, str) for c in chunks):
+                    elapsed_time = time.time() - start_time
+                    click.echo(f"[info] Adaptive chunking produced {len(chunks)} chunks in {elapsed_time:.2f} seconds")
+                    return chunks
+                else:
+                    click.echo("[warning] Adaptive chunking failed to produce valid chunks, trying semantic chunking", err=True)
+            except ImportError as ie:
+                click.echo(f"[warning] Adaptive chunking not available: {ie}", err=True)
+                click.echo("[info] Falling back to semantic chunking", err=True)
+            except Exception as e:
+                click.echo(f"[warning] Adaptive chunking failed: {e}", err=True)
+                click.echo("[info] Falling back to semantic chunking", err=True)
+        except Exception as e:
+            click.echo(f"[warning] Unexpected error in adaptive chunking: {e}", err=True)
+    
+    # Try semantic chunking if adaptive chunking is disabled or failed
     try:
         import time
         start_time = time.time()
@@ -230,13 +264,62 @@ def semantic_chunk_text(text: str, max_chars: int, overlap: int = 0, fast_mode: 
 
 
 def get_openai_client(api_key: str):
+    """
+    Get an OpenAI client instance with improved version detection.
+    
+    This function attempts to handle different versions of the OpenAI Python client:
+    - v0.x (openai<1.0): Global module with openai.api_key and openai.Embedding.create
+    - v1.x (openai>=1.0): Client instance with client.embeddings.create
+    
+    Args:
+        api_key: OpenAI API key
+    
+    Returns:
+        OpenAI client (either module or instance depending on version)
+    """
     openai = _lazy_import("openai")
-    # lazily set api key; property name changed in v1 openai lib
+    
+    # First, check if we're using v1.x by attempting to detect the OpenAI class
+    # This is the most reliable method for detecting v1.x
+    if hasattr(openai, "OpenAI"):
+        try:
+            click.echo("[info] Detected OpenAI Python SDK v1.x")
+            client = openai.OpenAI(api_key=api_key)
+            
+            # Verify this is really a v1 client by checking for crucial methods
+            if hasattr(client, "embeddings") and hasattr(client.embeddings, "create"):
+                return client
+        except Exception as e:
+            click.echo(f"[warning] Failed to initialize OpenAI v1 client: {e}", err=True)
+    
+    # If we get here, either we're using v0.x or the v1 client creation failed
+    # Try to set the API key on the module (v0.x style)
     try:
+        click.echo("[info] Attempting to use OpenAI Python SDK v0.x")
         openai.api_key = api_key
-    except AttributeError:  # openai>=1.0
-        client = openai.OpenAI(api_key=api_key)
+        
+        # Verify this is really a v0 client by checking for crucial methods
+        if hasattr(openai, "Embedding") and hasattr(openai.Embedding, "create"):
+            return openai
+        else:
+            click.echo("[warning] OpenAI client doesn't have expected v0.x methods", err=True)
+    except AttributeError:
+        click.echo("[warning] Unable to set api_key on OpenAI module", err=True)
+    
+    # As a last resort, try again with v1 but with base_url and organization=None
+    try:
+        click.echo("[info] Attempting alternate OpenAI SDK v1.x initialization")
+        client = openai.OpenAI(
+            api_key=api_key,
+            base_url="https://api.openai.com/v1",
+            organization=None,
+        )
         return client
+    except Exception as e:
+        click.echo(f"[error] All methods of OpenAI client initialization failed: {e}", err=True)
+        click.echo(f"[info] Returning potentially incomplete OpenAI client", err=True)
+        
+    # Return whatever we have, even if it might not work correctly
     return openai
 
 
@@ -268,11 +351,19 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
         injected into the copied *metadata* for downstream processing."""
 
         docs_out: list[Document] = []
+        
+        # Ensure global variables are properly initialized
+        global _use_fast_chunking, _adaptive_chunking
+        if not hasattr(sys.modules[__name__], '_use_fast_chunking'):
+            _use_fast_chunking = True
+        if not hasattr(sys.modules[__name__], '_adaptive_chunking'):
+            _adaptive_chunking = False
 
         # 1. Try semantic chunking first (from advanced_rag)
         try:
             # Use semantic chunking with configurable fast mode
-            chunks = semantic_chunk_text(text, chunk_size, overlap, fast_mode=_use_fast_chunking)
+            # Use proper global variables for configuration
+            chunks = semantic_chunk_text(text, chunk_size, overlap, fast_mode=_use_fast_chunking, use_adaptive=_adaptive_chunking)
             mode_str = "fast" if _use_fast_chunking else "precise"
             click.echo(f"[info] Used {mode_str} semantic chunking for text")
         except Exception as e:
@@ -454,7 +545,19 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
                                 md = elem.to_markdown()
                             except Exception:
                                 md = elem.get_text()
-                            docs_url.append(Document(content=md, metadata={"source": source, "is_table": True}))
+                            # Split table into row-level chunks for better embeddings
+                            lines = md.splitlines()
+                            if len(lines) > 2:
+                                header = lines[0]
+                                sep = lines[1]
+                                for row in lines[2:]:
+                                    row = row.strip()
+                                    if not row:
+                                        continue
+                                    row_md = f"{header}\n{sep}\n{row}"
+                                    docs_url.append(Document(content=row_md, metadata={"source": source, "is_table": True}))
+                            else:
+                                docs_url.append(Document(content=md, metadata={"source": source, "is_table": True}))
                         elif hasattr(elem, 'text') and isinstance(elem.text, str):
                             txt = elem.text
                             docs_url.extend(_chunk_text_tokenwise(txt, {"source": source}))
@@ -501,7 +604,19 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
                             md = elem.to_markdown()
                         except Exception:
                             md = elem.get_text()
-                        docs_pdf.append(Document(content=md, metadata={"source": source, "is_table": True}))
+                        # Split table into row-level chunks for better embeddings
+                        lines = md.splitlines()
+                        if len(lines) > 2:
+                            header = lines[0]
+                            sep = lines[1]
+                            for row in lines[2:]:
+                                row = row.strip()
+                                if not row:
+                                    continue
+                                row_md = f"{header}\n{sep}\n{row}"
+                                docs_pdf.append(Document(content=row_md, metadata={"source": source, "is_table": True}))
+                        else:
+                            docs_pdf.append(Document(content=md, metadata={"source": source, "is_table": True}))
                     elif hasattr(elem, 'text') and isinstance(elem.text, str):
                         txt = elem.text
                         docs_pdf.extend(_chunk_text_tokenwise(txt, {"source": source}))
@@ -537,7 +652,19 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
                             md = elem.to_markdown()
                         except Exception:
                             md = elem.get_text()
-                        docs_html.append(Document(content=md, metadata={"source": source, "is_table": True}))
+                        # Split table into row-level chunks for better embeddings
+                        lines = md.splitlines()
+                        if len(lines) > 2:
+                            header = lines[0]
+                            sep = lines[1]
+                            for row in lines[2:]:
+                                row = row.strip()
+                                if not row:
+                                    continue
+                                row_md = f"{header}\n{sep}\n{row}"
+                                docs_html.append(Document(content=row_md, metadata={"source": source, "is_table": True}))
+                        else:
+                            docs_html.append(Document(content=md, metadata={"source": source, "is_table": True}))
                     elif hasattr(elem, 'text') and isinstance(elem.text, str):
                         txt = elem.text
                         docs_html.extend(_chunk_text_tokenwise(txt, {"source": source}))
@@ -716,8 +843,19 @@ def embed_and_upsert(
 ):
     """Embed *docs* in batches and upsert them into Qdrant."""
 
-    # Determine which OpenAI binding style is active
-    is_openai_v1 = hasattr(openai_client, "embeddings")  # v1+ has .embeddings.create
+    # Determine which OpenAI binding style is active with more robust detection
+    is_openai_v1 = False
+    
+    # First check for openai v1 API style
+    if hasattr(openai_client, "embeddings"):
+        # Verify it's actually the v1 API by checking for the 'create' method
+        if hasattr(openai_client.embeddings, "create"):
+            is_openai_v1 = True
+    # Additional check for v1 API style with different attribute patterns
+    elif hasattr(openai_client, "Embeddings") and hasattr(openai_client.Embeddings, "create"):
+        is_openai_v1 = True
+    
+    click.echo(f"[info] Using OpenAI {'v1' if is_openai_v1 else 'v0'} API for embeddings")
 
     from qdrant_client.http import models as rest
 
@@ -838,7 +976,7 @@ def embed_and_upsert(
     help="Path to .env file with environment variables (if present, loaded before other options)."
 )
 @click.option("--source", required=True, help="Path/URL/DSN pointing to the corpus to ingest.")
-@click.option("--collection", default="rag_data", show_default=True, help="Qdrant collection name to create/use.")
+@click.option("--collection", default="mattermost_rag_store", show_default=True, help="Qdrant collection name to create/use.")
 @click.option("--batch-size", type=int, default=100, show_default=True, help="Embedding batch size.")
 @click.option("--openai-api-key", envvar="OPENAI_API_KEY", help="Your OpenAI API key (can also use env var OPENAI_API_KEY)")
 @click.option("--qdrant-host", default="localhost", show_default=True, help="Qdrant host (ignored when --qdrant-url is provided).")
@@ -852,20 +990,48 @@ def embed_and_upsert(
 @click.option("--parallel", type=int, default=15, show_default=True, help="Number of parallel workers for Qdrant upsert.")
 @click.option("--fast-chunking/--precise-chunking", default=True, show_default=True, 
               help="Use fast heuristic-based semantic chunking (faster) or transformer-based semantic chunking (more precise but much slower).")
-@click.option("--generate-summaries/--no-generate-summaries", default=False, show_default=True,
-              help="Generate and index brief summaries of each chunk for multi-granularity retrieval.")
-@click.option("--quality-checks/--no-quality-checks", default=False, show_default=True,
-              help="Perform post-ingest quality checks on chunk sizes and entity consistency.")
-@click.option("--rich-metadata/--no-rich-metadata", default=False, show_default=True, 
-              help="Extract rich metadata from document content for better retrieval context.",
+@click.option("--generate-summaries/--no-generate-summaries", default=True, show_default=True,
+               help="Generate and index brief summaries of each chunk for multi-granularity retrieval.")
+@click.option("--quality-checks/--no-quality-checks", default=True, show_default=True,
+               help="Perform post-ingest quality checks on chunk sizes and entity consistency.")
+@click.option("--rich-metadata/--no-rich-metadata", default=True, show_default=True, 
+               help="Extract rich metadata from document content for better retrieval context.",
               is_flag=True)
+@click.option("--hierarchical-embeddings/--no-hierarchical-embeddings", default=False, show_default=True,
+               help="Create hierarchical embeddings at document, section, and chunk levels.",
+              is_flag=True)
+@click.option("--entity-extraction/--no-entity-extraction", default=False, show_default=True,
+               help="Enable entity extraction and normalization for better embeddings.",
+              is_flag=True)
+@click.option("--enhance-text-with-entities/--no-enhance-text-with-entities", default=False, show_default=True,
+               help="Enhance document text with extracted entity information.",
+              is_flag=True)
+@click.option("--adaptive-chunking/--no-adaptive-chunking", default=False, show_default=True,
+               help="Use content-aware adaptive chunking instead of fixed-size chunking.",
+              is_flag=True)
+@click.option("--deduplication/--no-deduplication", default=False, show_default=True,
+               help="Enable duplicate detection and removal during ingestion.",
+              is_flag=True)
+@click.option("--similarity-threshold", type=float, default=0.85, show_default=True, 
+              help="Similarity threshold for near-duplicate detection (0-1).")
+@click.option("--merge-duplicates/--no-merge-duplicates", default=True, show_default=True,
+              help="Merge similar documents instead of removing them.")
+@click.option("--validate-ingestion/--no-validate-ingestion", default=False, show_default=True,
+              help="Run post-ingestion validation to verify embedding quality.")
+@click.option("--run-test-queries/--no-run-test-queries", default=False, show_default=True,
+              help="Run test queries after ingestion to verify retrieval.")
+@click.option("--doc-embedding-model", default="text-embedding-3-large", show_default=True,
+              help="OpenAI model to use for document-level embeddings.")
+@click.option("--section-embedding-model", default="text-embedding-3-large", show_default=True,
+              help="OpenAI model to use for section-level embeddings.")
+@click.option("--chunk-embedding-model", default="text-embedding-3-large", show_default=True,
+              help="OpenAI model to use for chunk-level embeddings.")
 @click.option(
     "--bm25-index",
     type=click.Path(dir_okay=False, writable=True),
-    default=None,
-    help="Path to write BM25 index JSON mapping point IDs to chunk_text."
-         " Defaults to '<collection>_bm25_index.json'.",
-)
+    default="mattermost_rag_store_bm25_index.json",
+    show_default=True,
+    help="Path to write BM25 index JSON mapping point IDs to chunk_text.")
 def cli(
     env_file: str | None,
     source: str,
@@ -885,6 +1051,18 @@ def cli(
     generate_summaries: bool,
     quality_checks: bool,
     rich_metadata: bool,
+    hierarchical_embeddings: bool,
+    entity_extraction: bool,
+    enhance_text_with_entities: bool,
+    adaptive_chunking: bool,
+    deduplication: bool,
+    similarity_threshold: float,
+    merge_duplicates: bool,
+    validate_ingestion: bool,
+    run_test_queries: bool,
+    doc_embedding_model: str,
+    section_embedding_model: str,
+    chunk_embedding_model: str,
     bm25_index: str | None,
 ) -> None:
     """Ingest *SOURCE* into a Qdrant RAG database using OpenAI embeddings."""
@@ -939,9 +1117,10 @@ def cli(
     # ---------------------------------------------------------------------
 
     click.echo(f"[info] Loading documents from source: {source} (chunk_size={chunk_size}, overlap={chunk_overlap}, crawl_depth={crawl_depth}, fast_chunking={fast_chunking})")
-    # Pass fast_chunking to the global scope for use in semantic_chunk_text
-    global _use_fast_chunking
+    # Pass configuration variables to the global scope for use in chunking functions
+    global _use_fast_chunking, _adaptive_chunking
     _use_fast_chunking = fast_chunking
+    _adaptive_chunking = adaptive_chunking
     documents = load_documents(source, chunk_size, chunk_overlap, crawl_depth)
     click.echo(f"[info] Loaded {len(documents)} document(s)")
 
@@ -952,6 +1131,69 @@ def cli(
     # -----------------------------------------------------------------
     # Enhanced metadata, quality checks, and optional summarization
     # -----------------------------------------------------------------
+    
+    # Apply entity extraction and normalization if enabled
+    if entity_extraction:
+        click.echo("[info] Applying entity extraction and normalization...")
+        
+        # Attempt to import entity_extraction module
+        try:
+            # Try to import using relative path first
+            try:
+                import entity_extraction
+                from entity_extraction import extract_and_normalize_entities, enhance_text_with_entities, get_entity_metadata
+                click.echo("[info] Using entity_extraction module from current directory")
+            except ImportError:
+                # Try to import using absolute path second
+                import os
+                import sys
+                # Get the script directory
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                # Add the script directory to sys.path if not already there
+                if script_dir not in sys.path:
+                    sys.path.insert(0, script_dir)
+                # Try importing again
+                from entity_extraction import extract_and_normalize_entities, enhance_text_with_entities, get_entity_metadata
+                click.echo("[info] Using entity_extraction module from script directory")
+                
+            # Process documents with entity extraction
+            processed_documents = []
+            for doc in tqdm(documents, desc="Extracting and normalizing entities"):
+                # Extract entities from document content
+                entity_data = extract_and_normalize_entities(doc.content)
+                
+                # Create metadata with entity information
+                entity_metadata = get_entity_metadata(doc.content)
+                
+                # Update document metadata with entity information
+                new_metadata = doc.metadata.copy()
+                new_metadata.update(entity_metadata)
+                
+                # Optionally enhance text with entity annotations for better embeddings
+                if enhance_text_with_entities:
+                    enhanced_content = enhance_text_with_entities(doc.content, entity_data)
+                    click.echo(f"[info] Enhanced document text with entity annotations")
+                else:
+                    enhanced_content = doc.content
+                
+                # Create new document with entity-enhanced content and metadata
+                processed_doc = Document(
+                    content=enhanced_content,
+                    metadata=new_metadata
+                )
+                processed_documents.append(processed_doc)
+            
+            # Replace original documents with processed versions
+            documents = processed_documents
+            click.echo(f"[info] Entity extraction completed for {len(documents)} documents")
+            
+        except ImportError as e:
+            click.echo(f"[warning] Entity extraction failed: {e}", err=True)
+            click.echo("[info] Install entity_extraction.py module or disable --entity-extraction flag", err=True)
+        except Exception as e:
+            click.echo(f"[warning] Entity extraction encountered an error: {e}", err=True)
+            click.echo("[info] Continuing without entity extraction", err=True)
+    
     # Apply rich metadata extraction if enabled
     if rich_metadata:
         click.echo("[info] Applying rich metadata extraction...")
@@ -1003,6 +1245,61 @@ def cli(
         except Exception as e:
             click.echo(f"[warning] Rich metadata extraction encountered an error: {e}", err=True)
             click.echo("[info] Continuing with basic metadata", err=True)
+    
+    # Apply deduplication if enabled
+    if deduplication:
+        click.echo("[info] Applying document deduplication...")
+        
+        # Attempt to import deduplication module
+        try:
+            # Try to import using relative path first
+            try:
+                import deduplication
+                from deduplication import deduplicate_documents
+                click.echo("[info] Using deduplication module from current directory")
+            except ImportError:
+                # Try to import using absolute path second
+                import os
+                import sys
+                # Get the script directory
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                # Add the script directory to sys.path if not already there
+                if script_dir not in sys.path:
+                    sys.path.insert(0, script_dir)
+                # Try importing again
+                from deduplication import deduplicate_documents
+                click.echo("[info] Using deduplication module from script directory")
+                
+            # Convert Document objects to dictionaries for deduplication
+            doc_dicts = [{"content": doc.content, "metadata": doc.metadata} for doc in documents]
+            
+            # Apply deduplication
+            click.echo(f"[info] Deduplicating {len(doc_dicts)} documents (threshold={similarity_threshold}, merge={merge_duplicates})")
+            deduplicated_docs, stats = deduplicate_documents(
+                doc_dicts,
+                similarity_threshold=similarity_threshold,
+                merge_similar=merge_duplicates
+            )
+            
+            # Convert back to Document objects
+            deduplicated = [Document(content=doc["content"], metadata=doc["metadata"]) for doc in deduplicated_docs]
+            
+            # Print deduplication stats
+            click.echo(f"[info] Deduplication complete: {stats.total_documents} → {stats.unique_documents} documents")
+            if stats.exact_duplicates > 0 or stats.near_duplicates > 0:
+                click.echo(f"[info] Removed {stats.exact_duplicates} exact duplicates and {stats.near_duplicates} near-duplicates")
+                click.echo(f"[info] Found {stats.duplicate_sets} duplicate clusters, largest had {stats.largest_cluster_size} documents")
+                click.echo(f"[info] Saved approximately {stats.characters_saved/1024:.1f} KB by deduplication")
+            
+            # Replace original documents with deduplicated ones
+            documents = deduplicated
+            
+        except ImportError as e:
+            click.echo(f"[warning] Deduplication failed: {e}", err=True)
+            click.echo("[info] Install deduplication.py module or disable --deduplication flag", err=True)
+        except Exception as e:
+            click.echo(f"[warning] Deduplication encountered an error: {e}", err=True)
+            click.echo("[info] Continuing without deduplication", err=True)
     
     # Annotate each chunk with enhanced metadata
     for idx, doc in enumerate(documents):
@@ -1158,21 +1455,200 @@ def cli(
     ensure_collection(client, collection, vector_size=VECTOR_SIZE, distance=distance)
 
     # ---------------------------------------------------------------------
-    # Embed & upsert
+    # Embed & upsert (with optional hierarchical embeddings)
     # ---------------------------------------------------------------------
 
     openai_client = get_openai_client(openai_api_key)
-
-    embed_and_upsert(
-        client,
-        collection,
-        documents,
-        openai_client,
-        batch_size=batch_size,
-        parallel=parallel,
-    )
+    
+    if hierarchical_embeddings:
+        try:
+            # Import hierarchical embeddings module
+            click.echo("[info] Using hierarchical embeddings at document, section, and chunk levels")
+            try:
+                # First try relative import
+                import hierarchical_embeddings
+            except ImportError:
+                # Try absolute path if relative import fails
+                import os
+                import sys
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                if script_dir not in sys.path:
+                    sys.path.insert(0, script_dir)
+                import hierarchical_embeddings
+            
+            # Configure models
+            hierarchical_embeddings.DOCUMENT_LEVEL_MODEL = doc_embedding_model
+            hierarchical_embeddings.SECTION_LEVEL_MODEL = section_embedding_model
+            hierarchical_embeddings.CHUNK_LEVEL_MODEL = chunk_embedding_model
+            
+            click.echo(f"[info] Using models: doc={doc_embedding_model}, section={section_embedding_model}, chunk={chunk_embedding_model}")
+            
+            # Convert our documents to the format expected by hierarchical_embeddings
+            doc_list = [{"content": doc.content, "metadata": doc.metadata} for doc in documents]
+            
+            click.echo(f"[info] Creating hierarchical embeddings for {len(doc_list)} documents")
+            
+            # Create hierarchical embeddings
+            hierarchical_data = hierarchical_embeddings.create_hierarchical_embeddings(
+                doc_list, 
+                openai_client,
+                batch_size=batch_size
+            )
+            
+            # Prepare points for Qdrant
+            points = hierarchical_embeddings.prepare_hierarchical_points_for_qdrant(hierarchical_data)
+            
+            # Statistics
+            doc_count = len(hierarchical_data["documents"])
+            section_count = len(hierarchical_data["sections"])
+            chunk_count = len(hierarchical_data["chunks"])
+            
+            click.echo(f"[info] Created hierarchical structure with {doc_count} documents, {section_count} sections, and {chunk_count} chunks")
+            
+            # Upsert points into Qdrant
+            from qdrant_client.http import models as rest
+            
+            # Batch points for upsert
+            for i in range(0, len(points), batch_size):
+                batch_points = points[i:i+batch_size]
+                # Convert dict to PointStruct
+                qdrant_points = [
+                    rest.PointStruct(
+                        id=p["id"], 
+                        vector=p["vector"], 
+                        payload=p["payload"]
+                    ) for p in batch_points
+                ]
+                
+                # Check if parallel parameter is supported
+                import inspect
+                client_upsert_params = inspect.signature(client.upsert).parameters
+                if 'parallel' in client_upsert_params:
+                    client.upsert(collection_name=collection, points=qdrant_points, parallel=parallel)
+                else:
+                    # Parallel kwarg not supported by this client version
+                    client.upsert(collection_name=collection, points=qdrant_points)
+                
+                click.echo(f"[info] Upserted batch {i//batch_size + 1}/{(len(points) + batch_size - 1)//batch_size}")
+                
+            # Save hierarchical structure to a separate file
+            structure_file = f"{collection}_hierarchical_structure.json"
+            with open(structure_file, "w") as f:
+                # Remove the large embeddings to keep file size reasonable
+                save_data = {
+                    "documents": [
+                        {k: v for k, v in doc.items() if k != "embedding"} 
+                        for doc in hierarchical_data["documents"]
+                    ],
+                    "sections": [
+                        {k: v for k, v in section.items() if k != "embedding"} 
+                        for section in hierarchical_data["sections"]
+                    ],
+                    "chunks": [
+                        {k: v for k, v in chunk.items() if k != "embedding"} 
+                        for chunk in hierarchical_data["chunks"]
+                    ],
+                    "statistics": hierarchical_data["statistics"]
+                }
+                json.dump(save_data, f)
+                
+            click.echo(f"[info] Saved hierarchical structure to {structure_file}")
+            
+        except Exception as e:
+            click.echo(f"[error] Hierarchical embeddings failed: {e}", err=True)
+            click.echo("[info] Falling back to regular embeddings", err=True)
+            # Fall back to regular embedding
+            embed_and_upsert(
+                client,
+                collection,
+                documents,
+                openai_client,
+                batch_size=batch_size,
+                parallel=parallel,
+            )
+    else:
+        # Standard embedding approach
+        embed_and_upsert(
+            client,
+            collection,
+            documents,
+            openai_client,
+            batch_size=batch_size,
+            parallel=parallel,
+        )
 
     click.secho(f"\n[success] Ingestion completed. Collection '{collection}' now holds the embeddings.", fg="green")
+    
+    # ---------------------------------------------------------------------
+    # Run post-ingestion validation if enabled
+    # ---------------------------------------------------------------------
+    if validate_ingestion or run_test_queries:
+        try:
+            # Import validation module
+            try:
+                from ingest_validation import validate_ingestion as validate_fn
+                from ingest_validation import run_test_queries as run_queries_fn
+                click.echo("[info] Using ingest_validation module")
+            except ImportError:
+                # Try to import using absolute path
+                import os
+                import sys
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                if script_dir not in sys.path:
+                    sys.path.insert(0, script_dir)
+                from ingest_validation import validate_ingestion as validate_fn
+                from ingest_validation import run_test_queries as run_queries_fn
+                click.echo("[info] Using ingest_validation module from script directory")
+                
+            # Run validation
+            if validate_ingestion:
+                click.echo("\n[info] Running post-ingestion validation...")
+                validation_summary = validate_fn(client, collection)
+                
+                # Print validation results
+                click.secho(f"\nValidation Results:", fg="cyan")
+                click.secho(f"Status: {validation_summary.overall_status}", 
+                           fg="green" if validation_summary.overall_status == "PASSED" else "yellow" if validation_summary.overall_status == "PARTIAL" else "red")
+                click.echo(f"Tests Passed: {validation_summary.passed_tests}/{validation_summary.total_tests}")
+                click.echo(f"Overall Score: {validation_summary.average_score:.2f}/1.00")
+                
+                # Print individual test results
+                click.echo("\nTest Details:")
+                for result in validation_summary.results:
+                    status = "✅ PASS" if result.passed else "❌ FAIL"
+                    click.echo(f"{status} [{result.test_name}] Score: {result.score:.2f} - {result.message}")
+                
+                # Print critical issues
+                if validation_summary.critical_issues:
+                    click.secho("\nCritical Issues:", fg="red")
+                    for issue in validation_summary.critical_issues:
+                        click.echo(f"- {issue}")
+            
+            # Run test queries
+            if run_test_queries:
+                click.echo("\n[info] Running test queries to verify retrieval...")
+                query_result = run_queries_fn(client, collection, openai_client)
+                
+                # Print query test results
+                status = "✅ PASS" if query_result.passed else "❌ FAIL"
+                click.secho(f"\nQuery Test: {status}", fg="green" if query_result.passed else "red")
+                click.echo(f"Score: {query_result.score:.2f}")
+                click.echo(f"Message: {query_result.message}")
+                
+                # Print detailed metrics
+                details = query_result.details
+                click.echo(f"Queries Run: {details.get('total_queries', 0)}")
+                click.echo(f"Hit Rate: {details.get('hit_rate', 0):.2f}")
+                if details.get('avg_position') is not None:
+                    click.echo(f"Average Position: {details.get('avg_position', 0):.1f}")
+                click.echo(f"Average Latency: {details.get('avg_latency', 0):.3f} seconds")
+                
+        except ImportError as e:
+            click.echo(f"[warning] Validation failed to import: {e}", err=True)
+            click.echo("[info] Install ingest_validation.py module to enable validation", err=True)
+        except Exception as e:
+            click.echo(f"[warning] Validation error: {e}", err=True)
+            click.echo("[info] Validation failed but ingestion was successful", err=True)
     # ---------------------------------------------------------------------
     # Build BM25 index JSON mapping point IDs to chunk_text
     # ---------------------------------------------------------------------
