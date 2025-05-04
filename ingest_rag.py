@@ -50,8 +50,9 @@ from dateutil.parser import parse as _parse_date
 DATE_REGEX = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 # deterministic UUID generation does not require hashlib
 
-# Global flag for fast chunking mode
+# Global flags for chunking configuration
 _use_fast_chunking = True
+_adaptive_chunking = False
 
 # Optional dependencies – import lazily so that the error message is clearer.
 

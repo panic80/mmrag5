@@ -461,7 +461,36 @@ def handle_slash():
                     # If summaries or quality checks requested, delegate to ingest_rag CLI
                     if gen_summaries_flag or qc_flag:
                         # Determine list of sources (args) or channel transcript
-                        sources = list(args)
+                        # Filter out all flag arguments before treating them as sources
+                        feature_flags = ["--rich-metadata", "--hierarchical-embeddings", "--no-hierarchical-embeddings", 
+                                        "--entity-extraction", "--no-entity-extraction",
+                                        "--enhance-text-with-entities", "--no-enhance-text-with-entities",
+                                        "--adaptive-chunking", "--no-adaptive-chunking",
+                                        "--deduplication", "--no-deduplication",
+                                        "--merge-duplicates", "--no-merge-duplicates",
+                                        "--validate-ingestion", "--no-validate-ingestion",
+                                        "--run-test-queries", "--no-run-test-queries",
+                                        "--generate-summaries", "--no-generate-summaries",
+                                        "--quality-checks", "--no-quality-checks"]
+                        param_flags = ["--doc-embedding-model", "--section-embedding-model", 
+                                       "--chunk-embedding-model", "--similarity-threshold", 
+                                       "--parallel", "--chunk-size", "--chunk-overlap", "--crawl-depth",
+                                       "--collection", "-c", "--depth-crawl"]
+                        
+                        # Remove all flags and their parameter values
+                        sources = []
+                        i = 0
+                        while i < len(args):
+                            if args[i] in feature_flags:
+                                # Skip feature flags
+                                i += 1
+                            elif args[i] in param_flags and i + 1 < len(args):
+                                # Skip parameter flags and their values
+                                i += 2
+                            else:
+                                # Include as source
+                                sources.append(args[i])
+                                i += 1
                         tmp_path = None
                         if not sources:
                             # Fetch channel messages to temp file
@@ -698,8 +727,32 @@ def handle_slash():
                         
                         return
 
-                    # Filter out the --rich-metadata flag from args before treating them as sources
-                    sources = [arg for arg in args if arg != "--rich-metadata"]
+                    # Filter out all flag arguments from args before treating them as sources
+                    feature_flags = ["--rich-metadata", "--hierarchical-embeddings", "--no-hierarchical-embeddings", 
+                                    "--entity-extraction", "--no-entity-extraction",
+                                    "--enhance-text-with-entities", "--no-enhance-text-with-entities",
+                                    "--adaptive-chunking", "--no-adaptive-chunking",
+                                    "--deduplication", "--no-deduplication",
+                                    "--merge-duplicates", "--no-merge-duplicates",
+                                    "--validate-ingestion", "--no-validate-ingestion",
+                                    "--run-test-queries", "--no-run-test-queries"]
+                    param_flags = ["--doc-embedding-model", "--section-embedding-model", 
+                                  "--chunk-embedding-model", "--similarity-threshold"]
+                    
+                    # Remove all flags and their parameter values
+                    sources = []
+                    i = 0
+                    while i < len(args):
+                        if args[i] in feature_flags:
+                            # Skip feature flags
+                            i += 1
+                        elif args[i] in param_flags and i + 1 < len(args):
+                            # Skip parameter flags and their values
+                            i += 2
+                        else:
+                            # Include as source
+                            sources.append(args[i])
+                            i += 1
                     total_sources = len(sources)
                     post(f"Starting ingestion of {total_sources} source(s) into '{collection}'...")
                     total_chunks = 0
