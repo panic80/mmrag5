@@ -135,6 +135,13 @@ def _mmr_rerank(points: list[Any], mmr_lambda: float) -> list[Any]:
     show_default=True,
     help="Evaluate RAG quality and return feedback with results (requires advanced_rag).",
 )
+@click.option(
+    "--compress/--no-compress",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Apply contextual compression to focus retrieved chunks on query-relevant parts.",
+)
 @click.argument("query", nargs=-1, required=True)
 def main(
     collection: str,
@@ -160,6 +167,7 @@ def main(
     use_expansion: bool,
     max_expansions: int,
     evaluate: bool,
+    compress: bool,
     query: Sequence[str],
 ) -> None:
     """Embed QUERY with OpenAI and search a Qdrant RAG collection."""
@@ -466,6 +474,23 @@ def main(
         # Rebuild scored list in reranked order
         scored = [candidates[i] for i in idxs]
 
+    # Apply contextual compression if enabled
+    if compress:
+        try:
+            from advanced_rag import contextual_compression, get_compressed_text
+            click.echo(f"[info] Applying contextual compression to retrieved chunks...")
+            
+            # Compress the documents with respect to the query
+            scored = contextual_compression(query_text, scored, openai_client)
+            click.echo(f"[info] Compression complete for {len(scored)} documents")
+            
+        except ImportError as e:
+            click.echo(f"[warning] Contextual compression failed (advanced_rag module not found): {e}", err=True)
+            click.echo("[info] To use contextual compression, make sure the advanced_rag module is available")
+        except Exception as e:
+            click.echo(f"[warning] Contextual compression failed: {e}", err=True)
+            click.echo("[info] Continuing with uncompressed chunks")
+
     # Handle no matches
     if not scored:
         if hybrid:
@@ -491,10 +516,20 @@ def main(
                 
             click.echo(f"[{idx}] id={point.id}  score={score_str}{origin}")
             if snippet:
-                snippet_text = str(payload.get("chunk_text", "")).replace("\n", " ")
-                snippet_text = snippet_text[:200].strip()
-                if snippet_text:
-                    click.echo(f"    snippet: {snippet_text}…")
+                # Use compressed_text if available, otherwise fall back to original chunk_text
+                snippet_text = ""
+                if compress and "compressed_text" in payload:
+                    snippet_text = str(payload.get("compressed_text", "")).replace("\n", " ")
+                    # Add indication that this is compressed
+                    compression_ratio = payload.get("compression_ratio", 1.0)
+                    snippet_text = snippet_text[:200].strip()
+                    if snippet_text:
+                        click.echo(f"    compressed snippet [{compression_ratio:.1%}]: {snippet_text}…")
+                else:
+                    snippet_text = str(payload.get("chunk_text", "")).replace("\n", " ")
+                    snippet_text = snippet_text[:200].strip()
+                    if snippet_text:
+                        click.echo(f"    snippet: {snippet_text}…")
         
         # If we used query expansion, show a summary of the merged results
         if use_expansion and len(expanded_queries) > 1:
@@ -507,7 +542,13 @@ def main(
             max_ctx_chars = 1000
             for point in scored:
                 payload: dict[str, Any] = getattr(point, 'payload', {}) or {}
-                text = payload.get("chunk_text")
+                
+                # Use compressed text if available and compression is enabled
+                if compress and "compressed_text" in payload:
+                    text = payload.get("compressed_text", "")
+                else:
+                    text = payload.get("chunk_text", "")
+                    
                 if isinstance(text, str) and text:
                     snippet = text.replace("\n", " ")[:max_ctx_chars]
                     context_chunks.append(snippet)
@@ -519,6 +560,9 @@ def main(
                     "You are a helpful assistant. "
                     "Answer the question using the provided context as the primary source. "
                     "You may use your general knowledge to elaborate, but clearly indicate any information not present in the context."
+                    "Always be completely honest about what you know and don't know. "
+                    "If the context doesn't contain relevant information to answer the question, "
+                    "clearly state 'Based on the provided context, I don't have enough information to answer that question.'"
                 )
             }
             user_msg = {
@@ -539,7 +583,13 @@ def main(
     max_ctx_chars = 1000
     for point in scored:
         payload: dict[str, Any] = getattr(point, 'payload', {}) or {}
-        text = payload.get("chunk_text")
+        
+        # Use compressed text if available and compression is enabled
+        if compress and "compressed_text" in payload:
+            text = payload.get("compressed_text", "")
+        else:
+            text = payload.get("chunk_text", "")
+            
         if isinstance(text, str) and text:
             snippet = text.replace("\n", " ")[:max_ctx_chars]
             context_chunks.append(snippet)
@@ -553,6 +603,8 @@ def main(
             "Provide a comprehensive summary of the context that addresses the question. "
             "Include all relevant details from the context. "
             "If any answer elements are not found in the context, state 'I don't know.'"
+            "Be very careful not to hallucinate information that isn't in the context. "
+            "If you're unsure about something, clearly indicate your uncertainty."
         )
     }
     user_msg = {
@@ -572,24 +624,49 @@ def main(
     # Optional RAG quality evaluation
     if evaluate:
         try:
-            from advanced_rag import evaluate_rag_response
+            from advanced_rag import evaluate_rag_quality
             click.echo("\nEvaluating RAG response quality...")
             
-            evaluation = evaluate_rag_response(
+            evaluation = evaluate_rag_quality(
                 query=query_text,
-                context=context,
-                response=summary,
+                retrieved_chunks=context_chunks,
+                generated_answer=summary,
                 openai_client=openai_client
             )
             
             click.secho("\n[RAG Quality Evaluation]", fg="cyan")
-            click.echo(f"Relevance: {evaluation.get('relevance', 'N/A')}")
-            click.echo(f"Faithfulness: {evaluation.get('faithfulness', 'N/A')}")
-            click.echo(f"Coherence: {evaluation.get('coherence', 'N/A')}")
             
-            if 'feedback' in evaluation:
-                click.secho("\n[Improvement Suggestions]", fg="yellow")
-                click.echo(evaluation.get('feedback', 'No feedback available'))
+            # Display scores
+            scores = evaluation.get('scores', {})
+            if scores:
+                for metric, score in scores.items():
+                    # Format the score and highlight poor scores in red
+                    if isinstance(score, (int, float)):
+                        score_color = "red" if score < 5 else "green"
+                        click.secho(f"{metric.capitalize()}: {score}/10", fg=score_color)
+                    else:
+                        click.echo(f"{metric.capitalize()}: {score}")
+            
+            # Display feedback
+            feedback = evaluation.get('feedback', {})
+            if feedback:
+                strengths = feedback.get('strengths', [])
+                if strengths:
+                    click.secho("\nStrengths:", fg="green")
+                    for s in strengths:
+                        click.echo(f"  ✓ {s}")
+                
+                weaknesses = feedback.get('weaknesses', [])
+                if weaknesses:
+                    click.secho("\nAreas for Improvement:", fg="yellow")
+                    for w in weaknesses:
+                        click.echo(f"  ! {w}")
+                
+                suggestions = feedback.get('improvement_suggestions', [])
+                if suggestions:
+                    click.secho("\nSuggestions:", fg="blue")
+                    for s in suggestions:
+                        click.echo(f"  → {s}")
                 
         except ImportError:
             click.echo("[warning] RAG evaluation failed - advanced_rag module not found", err=True)

@@ -7,24 +7,14 @@ This module contains implementations of advanced RAG techniques from RAGIMPROVE.
 1. Semantic Document Chunking - Chunk documents based on semantic topic boundaries
 2. Query Expansion - Expand queries with LLM rewrites for better retrieval
 3. RAG Self-Evaluation - Evaluate RAG system quality for continuous improvement
-
-Usage:
-    from advanced_rag import semantic_chunk_text, expand_query, evaluate_rag_quality
-    
-    # For semantic chunking
-    chunks = semantic_chunk_text("Long document text here...", max_chars=1000)
-    
-    # For query expansion
-    expanded_queries = expand_query("original query", openai_client)
-    
-    # For RAG evaluation
-    evaluation = evaluate_rag_quality("query", "retrieved chunks", "generated answer", openai_client)
+4. Contextual Compression - Focus retrieved documents on query-relevant parts
 """
 
 import re
 import os
 import json
 import logging
+import time
 from typing import List, Dict, Any, Optional, Union, Tuple, Callable
 
 # Setup logging
@@ -585,6 +575,160 @@ Please provide your evaluation following the criteria in the system prompt."""
             "scores": {"overall": 0},
             "feedback": {"improvement_suggestions": ["Evaluation system error"]}
         }
+
+
+# -------------------------------------------------------------------------------
+# 4. CONTEXTUAL COMPRESSION
+# -------------------------------------------------------------------------------
+
+def contextual_compression(query: str, docs: List[Any], openai_client: OpenAIClient, 
+                         model: str = "gpt-4.1-nano") -> List[Any]:
+    """
+    Focus retrieved documents on query-relevant parts to reduce hallucination.
+    
+    Args:
+        query: The user query
+        docs: List of retrieved documents (e.g. Qdrant search results)
+        openai_client: OpenAI client (v0 or v1)
+        model: The model to use for compression
+        
+    Returns:
+        List of documents with compressed text added
+    """
+    logger.info(f"Performing contextual compression for query: '{query}'")
+    
+    if not docs:
+        logger.warning("No documents provided for compression")
+        return docs
+    
+    compressed_docs = []
+    start_time = time.time()
+    
+    # Determine if we have new OpenAI client or legacy
+    is_v1 = hasattr(openai_client, "chat") and hasattr(openai_client.chat, "completions")
+    
+    for i, doc in enumerate(docs):
+        # Extract document text
+        payload = getattr(doc, 'payload', {}) or {}
+        text = payload.get("chunk_text", "")
+        
+        if not text:
+            logger.warning(f"Document {i} has no chunk_text, skipping compression")
+            compressed_docs.append(doc)
+            continue
+            
+        # Skip very short texts that don't need compression
+        if len(text) < 200:
+            logger.info(f"Document {i} is too short for compression ({len(text)} chars)")
+            compressed_docs.append(doc)
+            continue
+            
+        logger.info(f"Compressing document {i} ({len(text)} chars)")
+        
+        # Create system and user messages
+        system_msg = {
+            "role": "system", 
+            "content": """You are a document compression expert. Your task is to extract the parts of the 
+document that are most relevant to the query, removing irrelevant information while 
+preserving all query-relevant facts, context, and details.
+
+Extract ONLY the sentences and paragraphs that directly relate to answering the query.
+Maintain the original wording of the extracted parts. 
+DO NOT add any new information, summaries or explanations."""
+        }
+        
+        user_msg = {
+            "role": "user",
+            "content": f"""Query: {query}
+
+Document:
+{text}
+
+Extract only the parts of this document that are most relevant to the query above.
+Preserve the original wording of the important parts."""
+        }
+        
+        try:
+            # Call OpenAI API based on client version
+            if is_v1:  # OpenAI v1 client
+                response = openai_client.chat.completions.create(
+                    model=model,
+                    messages=[system_msg, user_msg],
+                    temperature=0.1,  # Low temperature for more consistent results
+                    max_tokens=min(len(text.split()) // 2, 1000),  # Limit token length to force compression
+                    timeout=30  # 30 second timeout
+                )
+                compressed_text = response.choices[0].message.content.strip()
+            else:  # OpenAI v0 client
+                response = openai_client.ChatCompletion.create(
+                    model=model,
+                    messages=[system_msg, user_msg],
+                    temperature=0.1,
+                    max_tokens=min(len(text.split()) // 2, 1000),
+                    request_timeout=30
+                )
+                compressed_text = response.choices[0].message.content.strip()  # type: ignore
+                
+            # Calculate compression ratio
+            original_len = len(text)
+            compressed_len = len(compressed_text)
+            compression_ratio = compressed_len / original_len if original_len > 0 else 1.0
+            
+            logger.info(f"Compressed doc {i}: {original_len} → {compressed_len} chars ({compression_ratio:.2%})")
+            
+            # Check for empty or too-short compression result
+            if len(compressed_text) < 50 or compression_ratio < 0.1:
+                logger.warning(f"Compression too aggressive for doc {i}, using original")
+                compressed_text = text
+            
+            # Save compressed text in document
+            # We need to be careful here - Qdrant points aren't directly mutable
+            # We'll create a new object with the same attributes plus our compressed text
+            doc_dict = {}
+            
+            # Copy all attributes from the original document
+            for attr in dir(doc):
+                if not attr.startswith('_') and not callable(getattr(doc, attr)):
+                    doc_dict[attr] = getattr(doc, attr)
+            
+            # Create a mutable copy of the payload to modify
+            new_payload = payload.copy()
+            
+            # Add compressed text to payload
+            new_payload["compressed_text"] = compressed_text
+            new_payload["compression_ratio"] = compression_ratio
+            
+            # Create a new document object with the updated payload
+            from types import SimpleNamespace
+            new_doc = SimpleNamespace(**doc_dict)
+            new_doc.payload = new_payload
+            
+            compressed_docs.append(new_doc)
+            
+        except Exception as e:
+            logger.error(f"Compression failed for document {i}: {e}")
+            # Keep original document if compression fails
+            compressed_docs.append(doc)
+    
+    elapsed_time = time.time() - start_time
+    logger.info(f"Contextual compression complete for {len(docs)} documents in {elapsed_time:.2f} seconds")
+    
+    return compressed_docs
+
+
+def get_compressed_text(doc: Any) -> str:
+    """
+    Helper function to get the compressed text from a document,
+    falling back to chunk_text if compressed_text is not available.
+    
+    Args:
+        doc: Document object with payload
+        
+    Returns:
+        Compressed text or original chunk text
+    """
+    payload = getattr(doc, 'payload', {}) or {}
+    return payload.get("compressed_text", payload.get("chunk_text", ""))
 
 
 # Helper function to get current timestamp

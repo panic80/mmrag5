@@ -92,56 +92,101 @@ def handle_slash():
             # Asynchronous execution
             def run_and_post():
                 # Launch the query subprocess and stream output back to Mattermost
+                # Track whether REST calls are still worth trying for this request
+                rest_usable: dict[str, bool] = {"ok": bool(mattermost_url and mattermost_token and channel_id)}
+
+                def _post_message(txt: str):
+                    """Post *txt* to the originating channel.
+
+                    1. Try the Mattermost REST API (only once it succeeds).
+                    2. If it is unavailable or replies 401/403, permanently
+                       disable further REST attempts for this request and fall
+                       back to `response_url` so we don’t spam the log.
+                    """
+
+                    # Fast-path: if we already know REST is unusable, skip it.
+                    if rest_usable["ok"]:
+                        try:
+                            hdrs = {"Authorization": f"Bearer {mattermost_token}"}
+                            resp = requests.post(
+                                f"{mattermost_url}/api/v4/posts",
+                                headers=hdrs,
+                                json={"channel_id": channel_id, "message": txt},
+                                timeout=10,
+                            )
+                            if resp.status_code in (200, 201):
+                                return  # success
+                            # On auth errors, stop trying REST for the rest of this request
+                            if resp.status_code in (401, 403):
+                                rest_usable["ok"] = False
+                            app.logger.warning(
+                                "Posting via REST API failed with %s – falling back to response_url",
+                                resp.status_code,
+                            )
+                        except Exception:
+                            rest_usable["ok"] = False
+                            app.logger.exception("REST API post failed – falling back to response_url")
+
+                    # Fallback: use response_url (Slack/Mattermost compatible)
+                    if response_url:
+                        try:
+                            requests.post(
+                                response_url,
+                                json={"response_type": "in_channel", "text": txt},
+                                timeout=10,
+                            )
+                            return
+                        except Exception:
+                            app.logger.exception("Failed to post via response_url")
+
                 try:
                     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
                 except Exception as e:
-                    error_msg = f"Failed to start query: {e}"
-                    try:
-                        if mattermost_url and mattermost_token and channel_id:
-                            headers = {"Authorization": f"Bearer {mattermost_token}"}
-                            requests.post(
-                                f"{mattermost_url}/api/v4/posts",
-                                headers=headers,
-                                json={"channel_id": channel_id, "message": error_msg},
-                            )
-                        else:
-                            app.logger.error("Missing Mattermost URL/token/channel_id for posting error message")
-                    except Exception:
-                        app.logger.exception("Failed to post error message")
+                    _post_message(f"Failed to start query: {e}")
                     return
 
                 # Stream subprocess output line by line
+                # -------------------------------------------------------------
+                # Collect full stdout so we can extract only the final answer
+                # (plus minimal context) and post a single tidy message.
+                # -------------------------------------------------------------
+                all_lines: list[str] = []
                 if proc.stdout:
                     for raw_line in proc.stdout:
-                        line = raw_line.rstrip()
-                        try:
-                            if mattermost_url and mattermost_token and channel_id:
-                                headers = {"Authorization": f"Bearer {mattermost_token}"}
-                                requests.post(
-                                    f"{mattermost_url}/api/v4/posts",
-                                    headers=headers,
-                                    json={"channel_id": channel_id, "message": line},
-                                )
-                            else:
-                                app.logger.error("Missing Mattermost URL/token/channel_id for posting progress")
-                        except Exception:
-                            app.logger.exception("Failed to post query output line")
-                # Wait for process to exit and report non-zero exit code if any
+                        all_lines.append(raw_line.rstrip())
+
+                # Wait for process termination
                 retcode = proc.wait()
+
+                # -------------------------------------------------------------
+                # Parse output – look for [answer] or [summary] header produced
+                # by query_rag.py and capture everything that follows it.
+                # -------------------------------------------------------------
+                answer_text = None
+                header_idx = None
+                for idx, ln in enumerate(all_lines):
+                    if ln.strip().lower().startswith("[answer]") or ln.strip().lower().startswith("[summary]"):
+                        header_idx = idx
+                        break
+                if header_idx is not None:
+                    # Take all lines after the header until another header or end
+                    answer_body: list[str] = []
+                    for ln in all_lines[header_idx + 1 :]:
+                        if ln.startswith("["):  # another section starts
+                            break
+                        answer_body.append(ln)
+                    answer_text = "\n".join(answer_body).strip()
+
+                if not answer_text:
+                    # Fallback: use last 20 lines of output
+                    answer_text = "\n".join(all_lines[-20:]).strip()
+
+                # Compose final message
+                final_msg = f"**Q:** {text}\n\n**A:**\n{answer_text}"
+
+                _post_message(final_msg)
                 if retcode != 0:
-                    error_msg = f"Query process exited with code {retcode}"
-                    try:
-                        if mattermost_url and mattermost_token and channel_id:
-                            headers = {"Authorization": f"Bearer {mattermost_token}"}
-                            requests.post(
-                                f"{mattermost_url}/api/v4/posts",
-                                headers=headers,
-                                json={"channel_id": channel_id, "message": error_msg},
-                            )
-                        else:
-                            app.logger.error("Missing Mattermost URL/token/channel_id for posting error code")
-                    except Exception:
-                        app.logger.exception("Failed to post exit code message")
+                    _post_message(f"Query process exited with code {retcode}")
             # Always run asynchronously
             threading.Thread(target=run_and_post, daemon=True).start()
             # Immediate acknowledgement
@@ -151,6 +196,11 @@ def handle_slash():
         elif cmd_name in ("inject", "injest"):
             import shlex
             def run_inject():
+                """Handle the /inject (or /injest) command in a background thread.
+
+                All progress lines are buffered and posted at the end as **one**
+                consolidated message so the channel isn’t flooded.
+                """
                 import requests
                 import shlex
                 import uuid
@@ -158,31 +208,67 @@ def handle_slash():
                 import sys
                 import tempfile
                 import urllib.parse
-                from ingest_rag import get_openai_client, load_documents, embed_and_upsert, ensure_collection
+                from ingest_rag import get_openai_client, load_documents, embed_and_upsert, ensure_collection, Document
                 from qdrant_client import QdrantClient
 
-                # Helper to post messages (Slack via response_url or Mattermost via REST API)
-                def post(msg: str):
-                    try:
-                        # Mattermost posts take priority when properly configured
-                        if mattermost_url and mattermost_token and channel_id:
-                            hdr = {"Authorization": f"Bearer {mattermost_token}"}
-                            requests.post(
-                                f"{mattermost_url}/api/v4/posts",
-                                headers=hdr,
-                                json={"channel_id": channel_id, "message": msg},
-                            )
-                        # Fallback to Slack-style response_url if available
-                        elif response_url:
-                            requests.post(
-                                response_url,
-                                json={"response_type": "in_channel", "text": msg},
-                            )
-                        else:
-                            app.logger.error("No callback available to post message: %s", msg)
-                    except Exception:
-                        app.logger.exception("Failed to post message: %s", msg)
+                # ------------------------------------------------------------------
+                # Buffering: collect all progress lines and send once at the end
+                # ------------------------------------------------------------------
 
+                buffered: list[str] = []
+
+                def post(msg: str):
+                    """Collect progress lines instead of posting immediately."""
+                    buffered.append(msg)
+
+                # Helper to send the final combined message (reuses logic from /ask)
+                rest_usable: dict[str, bool] = {"ok": bool(mattermost_url and mattermost_token and channel_id)}
+
+                def _post_combined():
+                    if not buffered:
+                        return
+                    joined = "\n".join(buffered)
+                    MAX_LEN = 3500
+
+                    # Send in chunks to stay below Mattermost's limit
+                    def _send(msg_part: str):
+                        if rest_usable["ok"]:
+                            try:
+                                hdrs = {"Authorization": f"Bearer {mattermost_token}"}
+                                resp = requests.post(
+                                    f"{mattermost_url}/api/v4/posts",
+                                    headers=hdrs,
+                                    json={"channel_id": channel_id, "message": msg_part},
+                                    timeout=10,
+                                )
+                                if resp.status_code in (200, 201):
+                                    return True
+                                if resp.status_code in (401, 403):
+                                    rest_usable["ok"] = False
+                            except Exception:
+                                rest_usable["ok"] = False
+                        # Fallback to response_url
+                        if response_url:
+                            try:
+                                requests.post(
+                                    response_url,
+                                    json={"response_type": "in_channel", "text": msg_part},
+                                    timeout=10,
+                                )
+                                return True
+                            except Exception:
+                                app.logger.exception("Failed to post combined message via response_url")
+                        return False
+
+                    for start in range(0, len(joined), MAX_LEN):
+                        _send(joined[start : start + MAX_LEN])
+                    return
+
+
+                # ----------------------------------------------------------
+                # Main ingestion logic – any return path will still execute
+                # the *finally* block below to post the combined message.
+                # ----------------------------------------------------------
                 try:
                     args = shlex.split(text or "")
                     # Default parallel upsert workers
@@ -244,6 +330,13 @@ def handle_slash():
                             i += 1
                         elif args[i] in ("--no-quality-checks", "--no-quality-check"):
                             qc_flag = False
+                            i += 1
+                        # Rich metadata flags
+                        elif args[i] == "--rich-metadata":
+                            clean_args.append(args[i])
+                            i += 1
+                        elif args[i] == "--no-rich-metadata":
+                            # Skip this flag
                             i += 1
                         else:
                             clean_args.append(args[i])
@@ -347,6 +440,16 @@ def handle_slash():
                             # Add quality checks flag
                             if qc_flag:
                                 cmd.append("--quality-checks")
+                                
+                            # Add rich metadata flag if present in cleaned args or in args
+                            if "--rich-metadata" in clean_args:
+                                # Make sure rich-metadata comes after --source to avoid treating it as a source
+                                # Move any existing occurrence to ensure it's after the source
+                                cmd = [arg for arg in cmd if arg != "--rich-metadata"]
+                                # Add it right after the source parameter
+                                src_idx = cmd.index("--source") + 2
+                                cmd.insert(src_idx, "--rich-metadata")
+                                
                             # pass Qdrant URL from env if set
                             qurl = os.environ.get("QDRANT_URL")
                             if qurl and not any(a.startswith("--qdrant-url") for a in cmd):
@@ -433,6 +536,15 @@ def handle_slash():
                             "--chunk-overlap", str(chunk_overlap_var),
                             "--crawl-depth", str(crawl_depth_var),
                         ]
+                        # Add rich metadata flag if specified
+                        if "--rich-metadata" in clean_args:
+                            # Make sure rich-metadata comes after --source to avoid treating it as a source
+                            # Move any existing occurrence to ensure it's after the source
+                            cmd = [arg for arg in cmd if arg != "--rich-metadata"]
+                            # Add it right after the source parameter
+                            src_idx = cmd.index("--source") + 2
+                            cmd.insert(src_idx, "--rich-metadata")
+                            
                         # Include Qdrant URL if provided
                         qurl = os.environ.get("QDRANT_URL")
                         if qurl and not any(a.startswith("--qdrant-url") for a in cmd):
@@ -460,11 +572,12 @@ def handle_slash():
                             pass
                         return
 
-                    # Ingest provided sources
-                    total_sources = len(args)
+                    # Filter out the --rich-metadata flag from args before treating them as sources
+                    sources = [arg for arg in args if arg != "--rich-metadata"]
+                    total_sources = len(sources)
                     post(f"Starting ingestion of {total_sources} source(s) into '{collection}'...")
                     total_chunks = 0
-                    for idx, source in enumerate(args, start=1):
+                    for idx, source in enumerate(sources, start=1):
                         local_src = source
                         # Download remote source to local file so docling can extract & chunk
                         if source.lower().startswith(("http://", "https://")):
@@ -492,8 +605,37 @@ def handle_slash():
                         
                         # Enhanced URL loading with better error handling
                         try:
+                            # Apply rich metadata if flag is present
+                            apply_rich_metadata = "--rich-metadata" in clean_args
                             # Get all chunks (may include multiple pages)
                             docs = load_documents(local_src, chunk_size=chunk_size_var, overlap=chunk_overlap_var, crawl_depth=crawl_depth_var)
+                            
+                            # If rich metadata is requested, apply it directly to the documents
+                            if apply_rich_metadata and docs:
+                                post(f"[{idx}/{total_sources}] Applying rich metadata extraction...")
+                                try:
+                                    from rich_metadata import enrich_document_metadata
+                                    enriched_docs = []
+                                    for doc in docs:
+                                        # Convert Document class to dict format expected by enrich_document_metadata
+                                        doc_dict = {
+                                            "content": doc.content,
+                                            "metadata": doc.metadata.copy()
+                                        }
+                                        # Enrich metadata
+                                        enriched_doc_dict = enrich_document_metadata(doc_dict)
+                                        # Convert back to Document class
+                                        enriched_doc = Document(
+                                            content=enriched_doc_dict["content"],
+                                            metadata=enriched_doc_dict["metadata"]
+                                        )
+                                        enriched_docs.append(enriched_doc)
+                                    
+                                    # Replace original documents with enriched versions
+                                    docs = enriched_docs
+                                    post(f"[{idx}/{total_sources}] Rich metadata extraction completed for {len(docs)} documents")
+                                except Exception as e:
+                                    post(f"[warning] Rich metadata extraction failed: {e}")
                             
                             # Check if any documents were loaded
                             if not docs:
@@ -536,6 +678,9 @@ def handle_slash():
                 except BaseException as e:
                     # Catch SystemExit raised by _lazy_import as well as regular exceptions
                     post(f"❌ Ingestion failed: {e}")
+                finally:
+                    # Flush buffered progress lines (success or error)
+                    _post_combined()
             # Parse flags early for immediate handling of purge
             import shlex
             args = shlex.split(text or "")

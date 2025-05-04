@@ -18,6 +18,11 @@ This document outlines advanced techniques to improve Retrieval-Augmented Genera
 
 Semantic chunking divides documents based on topic boundaries rather than arbitrary character limits.
 
+**TODO:** Test both chunking modes in `semantic_chunk_text`:
+- Fast heuristic mode (default, `fast_mode=True`)
+- Full zero-shot classification mode (`fast_mode=False`)
+Also consider parallelizing the zero-shot classification pipeline (e.g., multi-worker) to reduce processing time.
+
 ```python
 def semantic_chunk_text(text, max_chars=1000):
     """Chunk text based on semantic topic boundaries."""

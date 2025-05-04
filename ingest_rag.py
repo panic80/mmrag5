@@ -8,7 +8,7 @@ database with Qdrant.
 The tool is intentionally *source‑agnostic* and *schema‑agnostic* – it relies
 on the `docling` project to ingest documents from *any* kind of data source
 (local files, URLs, databases, etc.).  After the documents are loaded, their
-content is embedded with OpenAI’s `text-embedding-3-large` model and stored in
+content is embedded with OpenAI's `text-embedding-3-large` model and stored in
 a Qdrant collection.
 
 Example
@@ -560,6 +560,12 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
     # (definition moved to top of function so that it can be referenced from
     # earlier code paths – see above.)
 
+    # Check if the source is a valid file or URL
+    # Skip docling processing if source appears to be a flag passed incorrectly
+    if source.startswith('--'):
+        click.echo(f"[fatal] Invalid source '{source}' - appears to be a command line flag. Did you mean to use this as a parameter?", err=True)
+        sys.exit(1)
+
     try:
         try:
             import docling.extract as dlextract
@@ -725,11 +731,26 @@ def embed_and_upsert(
         start_time = time.time()
         try:
             if is_openai_v1:
-                embeddings_response = openai_client.embeddings.create(
-                    model=model_name, 
-                    input=texts,
-                    timeout=timeout
-                )
+                # Newer openai>=1.0 client supports a `timeout` keyword argument
+                # but older stubs (or dummy objects in unit tests) may not.  Try
+                # passing the argument first and gracefully fall back to a call
+                # *without* it when it is not accepted.
+                try:
+                    embeddings_response = openai_client.embeddings.create(
+                        model=model_name,
+                        input=texts,
+                        timeout=timeout,
+                    )
+                except TypeError as exc:
+                    # Retry without the timeout keyword for compatibility with
+                    # simplified/dummy embeddings clients used in tests.
+                    if "timeout" in str(exc):
+                        embeddings_response = openai_client.embeddings.create(
+                            model=model_name,
+                            input=texts,
+                        )
+                    else:
+                        raise
                 return [record.embedding for record in embeddings_response.data]
             else:  # old openai<=0.28 style
                 embeddings_response = openai_client.Embedding.create(
@@ -835,6 +856,9 @@ def embed_and_upsert(
               help="Generate and index brief summaries of each chunk for multi-granularity retrieval.")
 @click.option("--quality-checks/--no-quality-checks", default=False, show_default=True,
               help="Perform post-ingest quality checks on chunk sizes and entity consistency.")
+@click.option("--rich-metadata/--no-rich-metadata", default=False, show_default=True, 
+              help="Extract rich metadata from document content for better retrieval context.",
+              is_flag=True)
 @click.option(
     "--bm25-index",
     type=click.Path(dir_okay=False, writable=True),
@@ -860,6 +884,7 @@ def cli(
     fast_chunking: bool,
     generate_summaries: bool,
     quality_checks: bool,
+    rich_metadata: bool,
     bm25_index: str | None,
 ) -> None:
     """Ingest *SOURCE* into a Qdrant RAG database using OpenAI embeddings."""
@@ -927,6 +952,58 @@ def cli(
     # -----------------------------------------------------------------
     # Enhanced metadata, quality checks, and optional summarization
     # -----------------------------------------------------------------
+    # Apply rich metadata extraction if enabled
+    if rich_metadata:
+        click.echo("[info] Applying rich metadata extraction...")
+        
+        # Attempt to import rich_metadata module
+        try:
+            # Try to import using relative path first
+            try:
+                import rich_metadata
+                from rich_metadata import enrich_document_metadata
+                click.echo("[info] Using rich_metadata module from current directory")
+            except ImportError:
+                # Try to import using absolute path second
+                import os
+                import sys
+                # Get the script directory
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                # Add the script directory to sys.path if not already there
+                if script_dir not in sys.path:
+                    sys.path.insert(0, script_dir)
+                # Try importing again
+                from rich_metadata import enrich_document_metadata
+                click.echo("[info] Using rich_metadata module from script directory")
+                
+            # Process documents with rich metadata extraction
+            enriched_documents = []
+            for doc in tqdm(documents, desc="Extracting rich metadata"):
+                # Convert Document class to dict format expected by enrich_document_metadata
+                doc_dict = {
+                    "content": doc.content,
+                    "metadata": doc.metadata.copy()
+                }
+                # Enrich metadata
+                enriched_doc_dict = enrich_document_metadata(doc_dict)
+                # Convert back to Document class
+                enriched_doc = Document(
+                    content=enriched_doc_dict["content"],
+                    metadata=enriched_doc_dict["metadata"]
+                )
+                enriched_documents.append(enriched_doc)
+            
+            # Replace original documents with enriched versions
+            documents = enriched_documents
+            click.echo(f"[info] Rich metadata extraction completed for {len(documents)} documents")
+            
+        except ImportError as e:
+            click.echo(f"[warning] Rich metadata extraction failed: {e}", err=True)
+            click.echo("[info] Install rich_metadata.py module or disable --rich-metadata flag", err=True)
+        except Exception as e:
+            click.echo(f"[warning] Rich metadata extraction encountered an error: {e}", err=True)
+            click.echo("[info] Continuing with basic metadata", err=True)
+    
     # Annotate each chunk with enhanced metadata
     for idx, doc in enumerate(documents):
         # Source file or URL
