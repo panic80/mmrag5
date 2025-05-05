@@ -14,6 +14,7 @@ from qdrant_client import QdrantClient
 # Reuse OpenAI client helper from ingest_rag
 from ingest_rag import get_openai_client
 import math
+import re
 
 def _cosine_sim(a: Sequence[float], b: Sequence[float]) -> float:
     """Compute cosine similarity between two vectors."""
@@ -44,13 +45,23 @@ def _mmr_rerank(points: list[Any], mmr_lambda: float) -> list[Any]:
                 rel = getattr(p, 'score', 0.0)
                 # novelty: max similarity to already selected
                 # Compute novelty: maximum similarity to already selected
-                nov = max(
-                    _cosine_sim(
-                        (getattr(p, 'vector', None) or []),
-                        (getattr(s, 'vector', None) or [])
-                    )
-                    for s in selected
-                )
+                try:
+                    similarities = [
+                        _cosine_sim(
+                            (getattr(p, 'vector', None) or []),
+                            (getattr(s, 'vector', None) or [])
+                        )
+                        for s in selected
+                    ]
+                    # Handle empty list case or all zero vectors
+                    if not similarities or all(sim == 0 for sim in similarities):
+                        nov = 0.0
+                    else:
+                        nov = max(similarities)
+                except (ZeroDivisionError, ValueError):
+                    # If cosine similarity fails due to division by zero
+                    # (which happens when vectors are all zeros)
+                    nov = 0.0
                 mmr_score = mmr_lambda * rel - (1.0 - mmr_lambda) * nov
                 if best is None or mmr_score > best_score:
                     best = p
@@ -107,7 +118,7 @@ def _mmr_rerank(points: list[Any], mmr_lambda: float) -> list[Any]:
 @click.option("--alpha", type=float, default=0.5, show_default=True, help="Weight for vector scores in hybrid fusion (0.0-1.0).")
 @click.option("--bm25-top", type=int, default=None, help="Number of top BM25 docs to consider (default: k).")
 @click.option("--rrf-k", type=float, default=60.0, show_default=True, help="Reciprocal Rank Fusion k hyperparameter.")
-@click.option("--rerank-top", type=int, default=0, show_default=True,
+@click.option("--rerank-top", type=int, default=20, show_default=True,
               help="Number of top retrieval results to re-rank using a cross-encoder (requires sentence-transformers).")
 @click.option("--mmr-lambda", type=float, default=0.5, show_default=True,
               help="MMR diversity parameter (lambda: 0=full diversity, 1=full relevance). Used when deep search is enabled.")
@@ -127,6 +138,20 @@ def _mmr_rerank(points: list[Any], mmr_lambda: float) -> list[Any]:
     default=3,
     show_default=True,
     help="Maximum number of query expansions to use.",
+)
+@click.option(
+    "--hierarchical-search/--no-hierarchical-search",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Enable hierarchical search across document, section, and chunk levels.",
+)
+@click.option(
+    "--level",
+    type=click.Choice(["document", "section", "chunk", "auto"]),
+    default="auto",
+    show_default=True,
+    help="Hierarchical embedding level to query (document, section, chunk, or auto).",
 )
 @click.option(
     "--evaluate",
@@ -166,6 +191,8 @@ def main(
     filters: Sequence[str],
     use_expansion: bool,
     max_expansions: int,
+    hierarchical_search: bool,
+    level: str,
     evaluate: bool,
     compress: bool,
     query: Sequence[str],
@@ -259,6 +286,48 @@ def main(
             if q_idx == 0:  # Only print this once
                 click.echo(f"[info] Applying filters: {filters}")
                 
+        # Apply hierarchical search filter if enabled
+        if hierarchical_search:
+            from qdrant_client.http.models import Filter, FieldCondition, MatchValue
+            
+            # Create filter based on selected level
+            # If filter_obj is already set from other filters, we'll add to it
+            if filter_obj is None:
+                filter_obj = Filter(must=[])
+            
+            # Auto mode tries to determine best level based on query length and complexity
+            if level == "auto":
+                # Use query characteristics to determine appropriate level
+                # Short specific queries (likely target chunks)
+                # Medium queries (likely target sections)
+                # Broad conceptual queries (likely target documents)
+                query_words = len(q_text.split())
+                query_sentences = len(re.findall(r'[.!?]+', q_text)) + 1
+                
+                if "summary" in q_text.lower() or "overview" in q_text.lower() or query_words < 4:
+                    selected_level = "document"
+                elif query_words > 15 or query_sentences > 2:
+                    selected_level = "section"
+                else:
+                    selected_level = "chunk"
+                    
+                if q_idx == 0:  # Only print this once
+                    click.echo(f"[info] Auto-selected hierarchical search level: {selected_level}")
+            else:
+                selected_level = level
+                
+            # Add level filter to existing filter
+            if hasattr(filter_obj, "must"):
+                filter_obj.must.append(FieldCondition(
+                    key="level",
+                    match=MatchValue(value=selected_level)
+                ))
+            else:
+                # In case filter_obj is an unexpected type, create a new one
+                filter_obj = Filter(must=[
+                    FieldCondition(key="level", match=MatchValue(value=selected_level))
+                ])
+                
         # Search in Qdrant (use new query_points if available)
         from qdrant_client.http.exceptions import UnexpectedResponse
         try:
@@ -318,6 +387,132 @@ def main(
     if use_expansion and len(expanded_queries) > 1:
         click.echo(f"[info] Merged {len(all_results)} results from {len(expanded_queries)} queries into {len(scored)} unique results")
         
+    # If hierarchical search is enabled, try to fetch related documents from hierarchy
+    if hierarchical_search:
+        try:
+            # Check if we have the hierarchical structure available
+            structure_file = f"{collection}_hierarchical_structure.json"
+            if os.path.exists(structure_file):
+                with open(structure_file, 'r') as f:
+                    hierarchical_structure = json.load(f)
+                
+                if level != "document":  # For chunk or section level searches
+                    # Enhance results by adding parent document information
+                    # This will help generate more coherent answers by providing higher-level context
+                    enhanced_points = []
+                    doc_context_added = set()  # Track which documents we've already added
+                    
+                    for point in scored:
+                        # Add the original result first
+                        enhanced_points.append(point)
+                        
+                        # Check if this is a section or chunk and try to find its parent
+                        point_id = point.id
+                        payload = getattr(point, 'payload', {}) or {}
+                        point_level = payload.get('level', '')
+                        
+                        # For sections, find parent document
+                        if point_level == 'section':
+                            doc_id = payload.get('document_id')
+                            if doc_id and doc_id not in doc_context_added:
+                                # Try to find the document in hierarchical_structure
+                                document = next((d for d in hierarchical_structure.get('documents', []) 
+                                                if d.get('id') == doc_id), None)
+                                if document:
+                                    # Create a simple namespace object for consistency
+                                    from types import SimpleNamespace
+                                    parent_doc = SimpleNamespace(
+                                        id=document.get('id'),
+                                        payload={'text': document.get('text', ''), 
+                                                 'level': 'document',
+                                                 'metadata': document.get('metadata', {})},
+                                        score=0.3  # Lower score for context docs
+                                    )
+                                    enhanced_points.append(parent_doc)
+                                    doc_context_added.add(doc_id)
+                                    
+                        # For chunks, find parent section and document
+                        elif point_level == 'chunk':
+                            section_id = payload.get('section_id')
+                            if section_id:
+                                # Find the section
+                                section = next((s for s in hierarchical_structure.get('sections', []) 
+                                              if s.get('id') == section_id), None)
+                                if section:
+                                    # Create section object
+                                    from types import SimpleNamespace
+                                    parent_section = SimpleNamespace(
+                                        id=section.get('id'),
+                                        payload={'text': section.get('text', ''),
+                                                 'level': 'section',
+                                                 'metadata': section.get('metadata', {})},
+                                        score=0.4  # Medium score for parent sections
+                                    )
+                                    enhanced_points.append(parent_section)
+                                    
+                                    # Also try to find the document
+                                    doc_id = section.get('document_id')
+                                    if doc_id and doc_id not in doc_context_added:
+                                        document = next((d for d in hierarchical_structure.get('documents', []) 
+                                                        if d.get('id') == doc_id), None)
+                                        if document:
+                                            parent_doc = SimpleNamespace(
+                                                id=document.get('id'),
+                                                payload={'text': document.get('text', ''),
+                                                         'level': 'document',
+                                                         'metadata': document.get('metadata', {})},
+                                                score=0.3  # Lower score for context docs
+                                            )
+                                            enhanced_points.append(parent_doc)
+                                            doc_context_added.add(doc_id)
+                    
+                    # Replace scored with enhanced results, but keep the original limit
+                    if enhanced_points:
+                        click.echo(f"[info] Added hierarchical context from {len(doc_context_added)} parent documents")
+                        scored = enhanced_points[:k]
+                        
+                elif level == "document":  # For document level searches
+                    # Enhance with sections and chunks for more detailed retrieval
+                    enhanced_points = []
+                    
+                    for point in scored:
+                        # Add the original document first
+                        enhanced_points.append(point)
+                        
+                        # Check if this is a document and find its sections and chunks
+                        point_id = point.id
+                        payload = getattr(point, 'payload', {}) or {}
+                        point_level = payload.get('level', '')
+                        
+                        if point_level == 'document':
+                            section_ids = payload.get('section_ids', [])
+                            if section_ids:
+                                # Find and add top sections (limited to avoid overwhelming)
+                                sections_to_add = min(3, len(section_ids))
+                                for i in range(sections_to_add):
+                                    section_id = section_ids[i]
+                                    section = next((s for s in hierarchical_structure.get('sections', []) 
+                                                   if s.get('id') == section_id), None)
+                                    if section:
+                                        from types import SimpleNamespace
+                                        child_section = SimpleNamespace(
+                                            id=section.get('id'),
+                                            payload={'text': section.get('text', ''),
+                                                     'level': 'section', 
+                                                     'metadata': section.get('metadata', {})},
+                                            score=0.5  # Higher score for important sections
+                                        )
+                                        enhanced_points.append(child_section)
+                    
+                    # Replace scored with enhanced results, but keep the original limit
+                    if enhanced_points:
+                        click.echo(f"[info] Added hierarchical context from document sections")
+                        scored = enhanced_points[:k]
+
+        except Exception as e:
+            click.echo(f"[warning] Hierarchical context enhancement failed: {e}", err=True)
+            click.echo("[info] Continuing with standard search results", err=True)
+        
     # Hybrid fusion (BM25 + vector) if enabled
     if hybrid:
         # Cache original scored list with vectors for MMR
@@ -340,11 +535,21 @@ def main(
                 click.echo(f"[info] Loading BM25 index from {bm25_index}")
 
         # Load or build BM25 index mapping point IDs to chunk text
+        # Attempt to load a pre-built BM25 index JSON; if missing or empty, rebuild from collection
+        build_index = True
         if bm25_index:
-            # load pre-built JSON
-            with open(bm25_index, "r") as f:
-                id2text = json.load(f)
-        else:
+            try:
+                with open(bm25_index, "r") as f:
+                    id2text = json.load(f)
+                if id2text:
+                    build_index = False
+                    click.echo(f"[info] Loaded BM25 index from {bm25_index} ({len(id2text)} entries)")
+                else:
+                    click.echo(f"[warning] BM25 index file {bm25_index} is empty, rebuilding from collection", err=True)
+            except Exception as e:
+                click.echo(f"[warning] Failed to load BM25 index '{bm25_index}': {e}, rebuilding from collection", err=True)
+                build_index = True
+        if build_index:
             click.echo(f"[info] Building BM25 index from collection '{collection}' (this may take a while)...")
             id2text: dict[str, str] = {}
             offset = None
@@ -457,22 +662,27 @@ def main(
                 err=True,
             )
             sys.exit(1)
-        # Load a default cross-encoder model
-        click.echo(f"[info] Re-ranking top {rerank_top} results with cross-encoder...")
+        # Load cross-encoder
+        click.echo(f"[info] Preparing to re-rank up to {rerank_top} results with cross-encoder...")
         ce = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-        # Select initial candidates
+        # Determine how many candidates we have to rerank
         n_rerank = min(rerank_top, len(scored))
-        candidates = scored[:n_rerank]
-        # Prepare (query, passage) pairs for scoring
-        pairs = [
-            (query_text, (getattr(p, 'payload', {}) or {}).get("chunk_text", ""))
-            for p in candidates
-        ]
-        # Predict relevance scores and sort
-        rerank_scores = ce.predict(pairs)
-        idxs = sorted(range(n_rerank), key=lambda i: rerank_scores[i], reverse=True)
-        # Rebuild scored list in reranked order
-        scored = [candidates[i] for i in idxs]
+        if n_rerank > 0:
+            click.echo(f"[info] Performing cross-encoder re-ranking on {n_rerank} candidates...")
+            candidates = scored[:n_rerank]
+            pairs = [
+                (query_text, (getattr(p, 'payload', {}) or {}).get("chunk_text", ""))
+                for p in candidates
+            ]
+            # Predict relevance scores and sort if pairs exist
+            if pairs:
+                rerank_scores = ce.predict(pairs)
+                idxs = sorted(range(n_rerank), key=lambda i: rerank_scores[i], reverse=True)
+                scored = [candidates[i] for i in idxs]
+            else:
+                click.echo("[warning] No text candidates available for cross-encoder re-ranking", err=True)
+        else:
+            click.echo(f"[info] --rerank-top specified but only {len(scored)} results available; skipping re-ranking", err=True)
 
     # Apply contextual compression if enabled
     if compress:
@@ -513,10 +723,23 @@ def main(
             if use_expansion and len(expanded_queries) > 1:
                 # We don't track which expansion provided each result, but we could add that in a future version
                 pass
+            
+            # Add hierarchical level information if available
+            level_info = ""
+            if hierarchical_search:
+                level_val = payload.get('level', '')
+                if level_val:
+                    # Format with different colors for different levels
+                    if level_val == 'document':
+                        level_info = click.style(" [DOCUMENT]", fg='bright_blue')
+                    elif level_val == 'section':
+                        level_info = click.style(" [SECTION]", fg='bright_green')
+                    elif level_val == 'chunk':
+                        level_info = click.style(" [CHUNK]", fg='bright_yellow')
                 
-            click.echo(f"[{idx}] id={point.id}  score={score_str}{origin}")
+            click.echo(f"[{idx}] id={point.id}  score={score_str}{origin}{level_info}")
             if snippet:
-                # Use compressed_text if available, otherwise fall back to original chunk_text
+                # Use compressed_text if available, otherwise fall back to text or chunk_text
                 snippet_text = ""
                 if compress and "compressed_text" in payload:
                     snippet_text = str(payload.get("compressed_text", "")).replace("\n", " ")
@@ -526,10 +749,22 @@ def main(
                     if snippet_text:
                         click.echo(f"    compressed snippet [{compression_ratio:.1%}]: {snippet_text}…")
                 else:
-                    snippet_text = str(payload.get("chunk_text", "")).replace("\n", " ")
+                    # For hierarchical results, check text field first (used by document/section levels)
+                    if hierarchical_search and "text" in payload:
+                        snippet_text = str(payload.get("text", "")).replace("\n", " ")
+                    else:
+                        snippet_text = str(payload.get("chunk_text", "")).replace("\n", " ")
+                    
                     snippet_text = snippet_text[:200].strip()
+                    
                     if snippet_text:
-                        click.echo(f"    snippet: {snippet_text}…")
+                        # Add level indication for hierarchical results
+                        if hierarchical_search and "level" in payload:
+                            level_val = payload.get("level", "")
+                            level_tag = f"[{level_val.upper()}] " if level_val else ""
+                            click.echo(f"    {level_tag}snippet: {snippet_text}…")
+                        else:
+                            click.echo(f"    snippet: {snippet_text}…")
         
         # If we used query expansion, show a summary of the merged results
         if use_expansion and len(expanded_queries) > 1:
@@ -537,32 +772,88 @@ def main(
             
         # Generate answer if LLM model is specified
         if llm_model:
-            # Gather context passages
+            # Gather context passages with token limiting
             context_chunks: list[str] = []
             max_ctx_chars = 1000
-            for point in scored:
+            
+            # Define token limits based on model
+            model_token_limits = {
+                "gpt-3.5-turbo": 4096,
+                "gpt-3.5-turbo-16k": 16384,
+                "gpt-4": 8192,
+                "gpt-4-32k": 32768,
+                "gpt-4-turbo": 128000,
+                "gpt-4o": 128000,
+            }
+            
+            # Determine max tokens based on model (reserving ~20% for prompt and response)
+            max_context_tokens = 4000  # Default if model not recognized
+            for model_prefix, limit in model_token_limits.items():
+                if llm_model.startswith(model_prefix):
+                    max_context_tokens = int(limit * 0.8)
+                    break
+            
+            # Simple token estimator (approximate - 1 token ≈ 4 chars in English)
+            def estimate_tokens(text: str) -> int:
+                return int(len(text) / 4) + 1
+            
+            # System and question tokens (approximate)
+            system_prompt = (
+                "You are a helpful assistant. "
+                "Using ONLY the provided context, answer the question. "
+                "Do not use any external information or general knowledge. "
+                "Do NOT hallucinate or add content not present in the context. "
+                "If the context does not contain enough information to answer, "
+                "explicitly state 'I don't have enough information to answer that question.'"
+            )
+            
+            base_tokens = estimate_tokens(system_prompt) + estimate_tokens(query_text) + 150  # Added overhead
+            available_tokens = max(0, max_context_tokens - base_tokens)
+            current_token_count = 0
+            separator = "\n\n---\n\n"
+            separator_tokens = estimate_tokens(separator)
+            
+            # Prioritize results by score for token allocation
+            for point in sorted(scored, key=lambda p: getattr(p, 'score', 0.0), reverse=True):
                 payload: dict[str, Any] = getattr(point, 'payload', {}) or {}
                 
                 # Use compressed text if available and compression is enabled
                 if compress and "compressed_text" in payload:
                     text = payload.get("compressed_text", "")
+                # For hierarchical results, check text field first (used by document/section levels)
+                elif hierarchical_search and "text" in payload:
+                    text = payload.get("text", "")
                 else:
                     text = payload.get("chunk_text", "")
                     
                 if isinstance(text, str) and text:
                     snippet = text.replace("\n", " ")[:max_ctx_chars]
+                    snippet_tokens = estimate_tokens(snippet)
+                    
+                    # Check if adding this chunk would exceed the token limit
+                    chunk_tokens_with_separator = snippet_tokens + (separator_tokens if context_chunks else 0)
+                    if current_token_count + chunk_tokens_with_separator > available_tokens:
+                        # Skip if this would exceed our token budget
+                        continue
+                    
                     context_chunks.append(snippet)
-            context = "\n\n---\n\n".join(context_chunks)
+                    current_token_count += chunk_tokens_with_separator
+            
+            # Log token usage for debugging
+            click.secho(f"\n[info] Using approximately {current_token_count} tokens for context out of {max_context_tokens} available", fg="cyan")
+            
+            context = separator.join(context_chunks)
             # Guide the model to use context but allow factual elaboration
+            # Guide the model to use context strictly and avoid hallucination
             system_msg = {
                 "role": "system",
                 "content": (
                     "You are a helpful assistant. "
-                    "Answer the question using the provided context as the primary source. "
-                    "You may use your general knowledge to elaborate, but clearly indicate any information not present in the context."
-                    "Always be completely honest about what you know and don't know. "
-                    "If the context doesn't contain relevant information to answer the question, "
-                    "clearly state 'Based on the provided context, I don't have enough information to answer that question.'"
+                    "Using ONLY the provided context, answer the question. "
+                    "Do not use any external information or general knowledge. "
+                    "Do NOT hallucinate or add content not present in the context. "
+                    "If the context does not contain enough information to answer, "
+                    "explicitly state 'I don't have enough information to answer that question.'"
                 )
             }
             user_msg = {
@@ -578,33 +869,83 @@ def main(
             click.echo(answer.strip())
         return
     # Default: summary-only
-    # Generate brief summary using LLM
+    # Generate brief summary using LLM with token limiting
     context_chunks: list[str] = []
     max_ctx_chars = 1000
-    for point in scored:
+    
+    # Reuse token estimation logic from above
+    # Define token limits based on model
+    model_token_limits = {
+        "gpt-3.5-turbo": 4096,
+        "gpt-3.5-turbo-16k": 16384,
+        "gpt-4": 8192,
+        "gpt-4-32k": 32768,
+        "gpt-4-turbo": 128000,
+        "gpt-4o": 128000,
+    }
+    
+    # Determine max tokens based on model (reserving ~20% for prompt and response)
+    max_context_tokens = 4000  # Default if model not recognized
+    for model_prefix, limit in model_token_limits.items():
+        if llm_model.startswith(model_prefix):
+            max_context_tokens = int(limit * 0.8)
+            break
+    
+    # Simple token estimator (approximate - 1 token ≈ 4 chars in English)
+    def estimate_tokens(text: str) -> int:
+        return int(len(text) / 4) + 1
+    
+    # System and question tokens (approximate)
+    system_prompt = (
+        "You are a helpful assistant. Synthesize a concise answer using the provided context."
+    )
+    
+    base_tokens = estimate_tokens(system_prompt) + estimate_tokens(query_text) + 150  # Added overhead
+    available_tokens = max(0, max_context_tokens - base_tokens)
+    current_token_count = 0
+    separator = "\n\n---\n\n"
+    separator_tokens = estimate_tokens(separator)
+    
+    # Prioritize results by score for token allocation
+    for point in sorted(scored, key=lambda p: getattr(p, 'score', 0.0), reverse=True):
         payload: dict[str, Any] = getattr(point, 'payload', {}) or {}
         
         # Use compressed text if available and compression is enabled
         if compress and "compressed_text" in payload:
             text = payload.get("compressed_text", "")
+        # For hierarchical results, check text field first (used by document/section levels)
+        elif hierarchical_search and "text" in payload:
+            text = payload.get("text", "")
         else:
             text = payload.get("chunk_text", "")
             
         if isinstance(text, str) and text:
             snippet = text.replace("\n", " ")[:max_ctx_chars]
+            snippet_tokens = estimate_tokens(snippet)
+            
+            # Check if adding this chunk would exceed the token limit
+            chunk_tokens_with_separator = snippet_tokens + (separator_tokens if context_chunks else 0)
+            if current_token_count + chunk_tokens_with_separator > available_tokens:
+                # Skip if this would exceed our token budget
+                continue
+            
             context_chunks.append(snippet)
-    context = "\n\n---\n\n".join(context_chunks)
+            current_token_count += chunk_tokens_with_separator
     
-    # Guide the model to produce a detailed summary based on context
+    # Log token usage for debugging
+    click.secho(f"\n[info] Using approximately {current_token_count} tokens for context out of {max_context_tokens} available", fg="cyan")
+    
+    context = separator.join(context_chunks)
+    
+    # Guide the model to produce a detailed, context-only summary
     system_msg = {
         "role": "system",
         "content": (
             "You are a helpful assistant. "
-            "Provide a comprehensive summary of the context that addresses the question. "
-            "Include all relevant details from the context. "
-            "If any answer elements are not found in the context, state 'I don't know.'"
-            "Be very careful not to hallucinate information that isn't in the context. "
-            "If you're unsure about something, clearly indicate your uncertainty."
+            "Provide a comprehensive summary based ONLY on the provided context to address the question. "
+            "Do not use any external knowledge or add information not present. "
+            "If the context does not include necessary information, "
+            "explicitly state 'I don't have enough information to answer that question.'"
         )
     }
     user_msg = {

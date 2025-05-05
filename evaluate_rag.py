@@ -5,7 +5,6 @@ Automated evaluation script for RAG pipelines using RAGAS, Constitutional-Judge,
 """
 import json
 import os
-import sys
 from typing import List, Dict
 
 import click
@@ -66,15 +65,66 @@ def retrieve_and_generate(
         snippet = payload.get("chunk_text") or payload.get("text") or ""
         contexts.append(snippet)
 
-    # Optional answer generation
+    # Optional answer generation with token limiting
     answer = None
     if llm_model:
-        context = "\n\n---\n\n".join(contexts[:k])
-        system_msg = {"role": "system", "content": "You are a helpful assistant."}
+        # Define token limits based on model
+        model_token_limits = {
+            "gpt-3.5-turbo": 4096,
+            "gpt-3.5-turbo-16k": 16384,
+            "gpt-4": 8192,
+            "gpt-4-32k": 32768,
+            "gpt-4-turbo": 128000,
+            "gpt-4o": 128000,
+        }
+        
+        # Determine max tokens based on model (reserving ~20% for prompt and response)
+        max_context_tokens = 4000  # Default if model not recognized
+        for model_prefix, limit in model_token_limits.items():
+            if llm_model.startswith(model_prefix):
+                max_context_tokens = int(limit * 0.8)
+                break
+        
+        # Simple token estimator (approximate - 1 token ≈ 4 chars in English)
+        def estimate_tokens(text: str) -> int:
+            return int(len(text) / 4) + 1
+        
+        # System and question tokens (approximate)
+        system_content = "You are a helpful assistant."
+        user_prefix = f"Use the following context to answer the question.\n\nContext:\n"
+        user_suffix = f"\n\nQuestion: {query}"
+        
+        base_tokens = estimate_tokens(system_content) + estimate_tokens(user_prefix) + estimate_tokens(user_suffix) + 50  # Added overhead
+        available_tokens = max(0, max_context_tokens - base_tokens)
+        
+        # Tokenize contexts and include as many as possible within the token limit
+        separator = "\n\n---\n\n"
+        separator_tokens = estimate_tokens(separator)
+        limited_contexts = []
+        current_token_count = 0
+        
+        # Sort contexts by relevance (assuming they're already ordered)
+        for ctx in contexts[:k]:  # Already limited by k
+            ctx_tokens = estimate_tokens(ctx)
+            # Add separator tokens if not the first context
+            ctx_with_sep_tokens = ctx_tokens + (separator_tokens if limited_contexts else 0)
+            
+            if current_token_count + ctx_with_sep_tokens <= available_tokens:
+                limited_contexts.append(ctx)
+                current_token_count += ctx_with_sep_tokens
+            else:
+                # We've reached our token limit
+                break
+        
+        print(f"Using {len(limited_contexts)} contexts with approximately {current_token_count} tokens out of {max_context_tokens} available")
+        
+        context = separator.join(limited_contexts)
+        system_msg = {"role": "system", "content": system_content}
         user_msg = {
             "role": "user",
-            "content": f"Use the following context to answer the question.\n\nContext:\n{context}\n\nQuestion: {query}",
+            "content": f"{user_prefix}{context}{user_suffix}",
         }
+        
         if hasattr(openai_client, "chat"):
             chat = openai_client.chat.completions.create(
                 model=llm_model, messages=[system_msg, user_msg]

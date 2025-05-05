@@ -39,9 +39,17 @@ WORKDIR /app
 # files change.
 COPY requirements.txt ./
 
+# First update pip and install the tokenizer and parallel processing libraries
 RUN pip install --no-cache-dir --upgrade pip \
- && pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir langchain unstructured
+ && pip install --no-cache-dir tiktoken>=0.3.0 mpire>=2.7.0
+
+# Then install semchunk separately to ensure dependencies are in place
+RUN pip install --no-cache-dir semchunk==2.2.2 \
+ && python -c "import semchunk; print('Semchunk imported successfully')"
+
+# Finally install the rest of the requirements
+RUN pip install --no-cache-dir -r requirements.txt \
+ && pip install --no-cache-dir langchain unstructured
 
 # -----------------------------------------------------------------------------
 # Copy the rest of the application code

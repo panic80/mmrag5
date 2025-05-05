@@ -1,0 +1,21 @@
+# Test Document for RAG System
+
+## Introduction
+This is a test document to evaluate the PDF ingestion pipeline in our RAG system.
+The system should be able to process this document, extract its content, and generate embeddings.
+
+## Key Features
+- PDF content extraction
+- Text chunking
+- Metadata enrichment
+- Embedding generation
+- Vector storage
+
+## Technical Details
+The RAG system uses advanced algorithms to process documents effectively.
+It employs OpenAI's embedding models to create vector representations of text chunks.
+These embeddings are then stored in a Qdrant vector database for efficient retrieval.
+
+## Conclusion
+This test document should help verify that the PDF ingestion pipeline works correctly.
+If successful, we'll see this content properly chunked and embedded in the system.

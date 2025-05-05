@@ -267,6 +267,7 @@ def handle_slash():
                 import urllib.parse
                 from ingest_rag import get_openai_client, load_documents, embed_and_upsert, ensure_collection, Document
                 from qdrant_client import QdrantClient
+                import json
 
                 # ------------------------------------------------------------------
                 # Buffering: collect all progress lines and send once at the end
@@ -336,7 +337,7 @@ def handle_slash():
                     # Parse slash-command flags for injection
                     # Known flags: parallel, chunk-size, chunk-overlap, crawl-depth,
                     # purge, collection, generate-summaries, quality-checks
-                    chunk_size_var = 500
+                    chunk_size_var = 1000
                     chunk_overlap_var = 50
                     crawl_depth_var = 0
                     clean_args: list[str] = []
@@ -398,15 +399,18 @@ def handle_slash():
                         elif args[i] == "--no-rich-metadata":
                             # Skip this flag
                             i += 1
-                        # Handle all our new feature flags
-                        elif args[i] in ("--hierarchical-embeddings", "--no-hierarchical-embeddings", 
-                                        "--entity-extraction", "--no-entity-extraction",
-                                        "--enhance-text-with-entities", "--no-enhance-text-with-entities",
-                                        "--adaptive-chunking", "--no-adaptive-chunking",
-                                        "--deduplication", "--no-deduplication",
-                                        "--merge-duplicates", "--no-merge-duplicates",
-                                        "--validate-ingestion", "--no-validate-ingestion",
-                                        "--run-test-queries", "--no-run-test-queries"):
+                        # Handle all our new feature flags (including chunking mode)
+                        elif args[i] in (
+                                "--hierarchical-embeddings", "--no-hierarchical-embeddings",
+                                "--entity-extraction", "--no-entity-extraction",
+                                "--enhance-text-with-entities", "--no-enhance-text-with-entities",
+                                "--adaptive-chunking", "--no-adaptive-chunking",
+                                "--deduplication", "--no-deduplication",
+                                "--merge-duplicates", "--no-merge-duplicates",
+                                "--validate-ingestion", "--no-validate-ingestion",
+                                "--run-test-queries", "--no-run-test-queries",
+                                "--fast-chunking", "--precise-chunking"
+                        ):
                             clean_args.append(args[i])
                             i += 1
                         # Handle flags with parameters
@@ -419,6 +423,18 @@ def handle_slash():
                             clean_args.append(args[i])
                             i += 1
                     args = clean_args
+                    # Honor fast/precise-chunking and adaptive-chunking flags in manual ingestion
+                    try:
+                        import ingest_rag as _ir
+                        # Set fast vs precise semantic chunking
+                        if "--precise-chunking" in args:
+                            _ir._use_fast_chunking = False
+                        elif "--fast-chunking" in args:
+                            _ir._use_fast_chunking = True
+                        # Set adaptive chunking
+                        _ir._adaptive_chunking = ("--adaptive-chunking" in args)
+                    except ImportError:
+                        pass
                     # Handle purge flag
                     purge = False
                     if "--purge" in args:
@@ -462,16 +478,19 @@ def handle_slash():
                     if gen_summaries_flag or qc_flag:
                         # Determine list of sources (args) or channel transcript
                         # Filter out all flag arguments before treating them as sources
-                        feature_flags = ["--rich-metadata", "--hierarchical-embeddings", "--no-hierarchical-embeddings", 
-                                        "--entity-extraction", "--no-entity-extraction",
-                                        "--enhance-text-with-entities", "--no-enhance-text-with-entities",
-                                        "--adaptive-chunking", "--no-adaptive-chunking",
-                                        "--deduplication", "--no-deduplication",
-                                        "--merge-duplicates", "--no-merge-duplicates",
-                                        "--validate-ingestion", "--no-validate-ingestion",
-                                        "--run-test-queries", "--no-run-test-queries",
-                                        "--generate-summaries", "--no-generate-summaries",
-                                        "--quality-checks", "--no-quality-checks"]
+                        feature_flags = [
+                            "--rich-metadata", "--hierarchical-embeddings", "--no-hierarchical-embeddings",
+                            "--entity-extraction", "--no-entity-extraction",
+                            "--enhance-text-with-entities", "--no-enhance-text-with-entities",
+                            "--adaptive-chunking", "--no-adaptive-chunking",
+                            "--fast-chunking", "--precise-chunking",
+                            "--deduplication", "--no-deduplication",
+                            "--merge-duplicates", "--no-merge-duplicates",
+                            "--validate-ingestion", "--no-validate-ingestion",
+                            "--run-test-queries", "--no-run-test-queries",
+                            "--generate-summaries", "--no-generate-summaries",
+                            "--quality-checks", "--no-quality-checks",
+                        ]
                         param_flags = ["--doc-embedding-model", "--section-embedding-model", 
                                        "--chunk-embedding-model", "--similarity-threshold", 
                                        "--parallel", "--chunk-size", "--chunk-overlap", "--crawl-depth",
@@ -563,12 +582,19 @@ def handle_slash():
                                 cmd.insert(src_idx, "--rich-metadata")
                             
                             # Add our new feature flags if they exist in clean_args
-                            for flag in ["--adaptive-chunking", "--hierarchical-embeddings", 
-                                        "--entity-extraction", "--enhance-text-with-entities",
-                                        "--deduplication", "--merge-duplicates",
-                                        "--validate-ingestion", "--run-test-queries"]:
+                            for flag in [
+                                "--adaptive-chunking", "--hierarchical-embeddings",
+                                "--entity-extraction", "--enhance-text-with-entities",
+                                "--deduplication", "--merge-duplicates",
+                                "--validate-ingestion", "--run-test-queries",
+                            ]:
                                 if flag in clean_args:
                                     cmd.append(flag)
+                            # Add chunking mode flags
+                            if "--precise-chunking" in clean_args:
+                                cmd.append("--precise-chunking")
+                            elif "--fast-chunking" in clean_args:
+                                cmd.append("--fast-chunking")
                             
                             # Add parameter flags with their values
                             param_flags = ["--doc-embedding-model", "--section-embedding-model", 
@@ -728,14 +754,17 @@ def handle_slash():
                         return
 
                     # Filter out all flag arguments from args before treating them as sources
-                    feature_flags = ["--rich-metadata", "--hierarchical-embeddings", "--no-hierarchical-embeddings", 
-                                    "--entity-extraction", "--no-entity-extraction",
-                                    "--enhance-text-with-entities", "--no-enhance-text-with-entities",
-                                    "--adaptive-chunking", "--no-adaptive-chunking",
-                                    "--deduplication", "--no-deduplication",
-                                    "--merge-duplicates", "--no-merge-duplicates",
-                                    "--validate-ingestion", "--no-validate-ingestion",
-                                    "--run-test-queries", "--no-run-test-queries"]
+                    feature_flags = [
+                        "--rich-metadata", "--hierarchical-embeddings", "--no-hierarchical-embeddings",
+                        "--entity-extraction", "--no-entity-extraction",
+                        "--enhance-text-with-entities", "--no-enhance-text-with-entities",
+                        "--adaptive-chunking", "--no-adaptive-chunking",
+                        "--fast-chunking", "--precise-chunking",
+                        "--deduplication", "--no-deduplication",
+                        "--merge-duplicates", "--no-merge-duplicates",
+                        "--validate-ingestion", "--no-validate-ingestion",
+                        "--run-test-queries", "--no-run-test-queries",
+                    ]
                     param_flags = ["--doc-embedding-model", "--section-embedding-model", 
                                   "--chunk-embedding-model", "--similarity-threshold"]
                     
@@ -850,16 +879,47 @@ def handle_slash():
                                 collection,
                                 pg_docs,
                                 openai_client,
-                                batch_size=16,
+                                batch_size=128,
                                 deterministic_id=True,
                                 parallel=parallel_var,
                             )
-                            total_chunks += pg_count
-                            post(f"[{idx}/{total_sources}] Done page {pg_idx}: total chunks so far: {total_chunks}")
+                        total_chunks += pg_count
+                        post(f"[{idx}/{total_sources}] Done page {pg_idx}: total chunks so far: {total_chunks}")
+                        # Flush current progress to channel and clear buffer for next updates
+                        _post_combined()
+                        buffered.clear()
                         # Cleanup temp PDF
                         if local_src != source:
                             try: os.remove(local_src)
                             except: pass
+                    # After ingestion, build BM25 index JSON for hybrid search
+                    idx_path = f"{collection}_bm25_index.json"
+                    post(f"[info] Building BM25 index JSON at {idx_path}")
+                    id2text: dict[str, str] = {}
+                    offset = None
+                    while True:
+                        records, offset = client.scroll(
+                            collection_name=collection,
+                            scroll_filter=None,
+                            limit=1000,
+                            offset=offset,
+                            with_payload=True,
+                        )
+                        if not records:
+                            break
+                        for rec in records:
+                            payload = getattr(rec, 'payload', {}) or {}
+                            chunk_txt = payload.get("chunk_text")
+                            if isinstance(chunk_txt, str) and chunk_txt:
+                                id2text[rec.id] = chunk_txt
+                        if offset is None:
+                            break
+                    try:
+                        with open(idx_path, "w") as f:
+                            json.dump(id2text, f)
+                        post(f"[success] BM25 index written to {idx_path}")
+                    except Exception as e:
+                        post(f"[warning] Failed to write BM25 index: {e}")
                     # Final summary: indicate completion with a checkmark and summary data
                     post(f"✅ Ingestion complete: {total_chunks} chunks from {total_sources} source(s) into '{collection}'.")
                 except BaseException as e:

@@ -1,0 +1,206 @@
+[
+  {
+    "id": "chunk_0",
+    "content": "# Test Document for RAG System",
+    "metadata": {
+      "chunk_index": 0,
+      "source": "test_document.txt",
+      "title": "Test Document for RAG System",
+      "statistics": {
+        "word_count": 6,
+        "char_count": 30,
+        "line_count": 1
+      },
+      "sentiment": "neutral"
+    },
+    "vector": [
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1
+    ]
+  },
+  {
+    "id": "chunk_1",
+    "content": "## Introduction\nThis is a test document to evaluate the PDF ingestion pipeline in our RAG system.\nThe system should be able to process this document, extract its content, and generate embeddings.",
+    "metadata": {
+      "chunk_index": 1,
+      "source": "test_document.txt",
+      "title": "Introduction",
+      "section_headers": [
+        "Introduction"
+      ],
+      "statistics": {
+        "word_count": 32,
+        "char_count": 195,
+        "line_count": 3
+      },
+      "sentiment": "neutral"
+    },
+    "vector": [
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1
+    ]
+  },
+  {
+    "id": "chunk_2",
+    "content": "## Key Features\n- PDF content extraction\n- Text chunking\n- Metadata enrichment\n- Embedding generation\n- Vector storage",
+    "metadata": {
+      "chunk_index": 2,
+      "source": "test_document.txt",
+      "title": "Key Features",
+      "bullet_points": [
+        "PDF content extraction",
+        "Text chunking",
+        "Metadata enrichment",
+        "Embedding generation",
+        "Vector storage"
+      ],
+      "section_headers": [
+        "Key Features"
+      ],
+      "statistics": {
+        "word_count": 19,
+        "char_count": 118,
+        "line_count": 6
+      },
+      "sentiment": "neutral"
+    },
+    "vector": [
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1
+    ]
+  },
+  {
+    "id": "chunk_3",
+    "content": "## Technical Details\nThe RAG system uses advanced algorithms to process documents effectively.\nIt employs OpenAI's embedding models to create vector representations of text chunks.\nThese embeddings are then stored in a Qdrant vector database for efficient retrieval.",
+    "metadata": {
+      "chunk_index": 3,
+      "source": "test_document.txt",
+      "title": "Technical Details",
+      "section_headers": [
+        "Technical Details"
+      ],
+      "statistics": {
+        "word_count": 38,
+        "char_count": 266,
+        "line_count": 4
+      },
+      "sentiment": "neutral"
+    },
+    "vector": [
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1
+    ]
+  },
+  {
+    "id": "chunk_4",
+    "content": "## Conclusion\nThis test document should help verify that the PDF ingestion pipeline works correctly.\nIf successful, we'll see this content properly chunked and embedded in the system.",
+    "metadata": {
+      "chunk_index": 4,
+      "source": "test_document.txt",
+      "title": "Conclusion",
+      "section_headers": [
+        "Conclusion"
+      ],
+      "statistics": {
+        "word_count": 28,
+        "char_count": 183,
+        "line_count": 3
+      },
+      "sentiment": "positive"
+    },
+    "vector": [
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1
+    ]
+  }
+]

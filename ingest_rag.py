@@ -51,8 +51,20 @@ DATE_REGEX = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 # deterministic UUID generation does not require hashlib
 
 # Global flags for chunking configuration
-_use_fast_chunking = True
-_adaptive_chunking = False
+# ---------------------------------------------------------------------------
+# Global configuration flags (toggled by CLI)
+# ---------------------------------------------------------------------------
+
+_use_fast_chunking: bool = True
+_adaptive_chunking: bool = False
+
+# Default set of ISO language codes that will be accepted by the language
+# filter.  The list is modified by the CLI option ``--languages``.
+_allowed_languages: set[str] = {"en"}
+
+# Minimum probability reported by the language detector for us to trust the
+# detection result.
+_lang_prob_threshold: float = 0.9
 
 # Optional dependencies – import lazily so that the error message is clearer.
 
@@ -119,6 +131,8 @@ def chunk_text(text: str, max_chars: int) -> list[str]:
     
 def _smart_chunk_text(text: str, max_chars: int, overlap: int = 0) -> list[str]:
     """
+    # For now, use paragraph-based chunking
+    return _smart_chunk_text(text, max_chars, overlap)
     Chunk text on paragraph and sentence boundaries up to max_chars,
     
     This is the original chunking method, kept as fallback if semantic chunking fails.
@@ -176,18 +190,49 @@ def _smart_chunk_text(text: str, max_chars: int, overlap: int = 0) -> list[str]:
         chunk = "\n\n".join(current_paras).strip()
         if chunk:
             chunks.append(chunk)
-    # apply overlap (character-level)
+    # ------------------------------------------------------------------
+    # Apply overlap – prefer *token*-level if *tiktoken* is available, fall
+    # back to character-level otherwise so behaviour degrades gracefully.
+    # ------------------------------------------------------------------
+
     if overlap > 0 and len(chunks) > 1:
+        try:
+            import tiktoken  # type: ignore
+
+            enc = tiktoken.get_encoding("cl100k_base")
+
+            overlapped: list[str] = []
+            overlapped.append(chunks[0])  # first chunk unchanged
+
+            for idx in range(1, len(chunks)):
+                prev_chunk = chunks[idx - 1]
+                curr_chunk = chunks[idx]
+
+                prev_tokens = enc.encode(prev_chunk)
+                # guard for short previous chunk
+                if not prev_tokens:
+                    overlap_text = ""
+                else:
+                    overlap_tokens = prev_tokens[-overlap:]
+                    overlap_text = enc.decode(overlap_tokens)
+
+                overlapped.append(f"{overlap_text}{curr_chunk}")
+
+            return overlapped
+        except ImportError:
+            # Fallback to simple character-level overlap if tiktoken unavailable
+            pass
+
         overlapped: list[str] = []
         for idx, chunk in enumerate(chunks):
             if idx == 0:
                 overlapped.append(chunk)
             else:
-                prev = overlapped[idx-1]
-                # take last overlap chars from previous chunk
+                prev = overlapped[idx - 1]
                 ov = prev[-overlap:] if len(prev) >= overlap else prev
                 overlapped.append(f"{ov} {chunk}")
         return overlapped
+
     return chunks
 
 
@@ -205,7 +250,72 @@ def semantic_chunk_text(text: str, max_chars: int, overlap: int = 0, fast_mode: 
     Returns:
         List of semantically chunked text segments
     """
-    # First try adaptive chunking if enabled
+    # For now, bypass semantic chunking and use paragraph-based splitting
+    return _smart_chunk_text(text, max_chars, overlap)
+    # First try semchunk (token-based semantic chunking) if available
+    # Try semchunk for fast semantic chunking (without relying on LLMs)
+    try:
+        import semchunk
+        # semchunk.splitter yields list[str]
+        overlap_frac = (overlap / max_chars) if max_chars else 0.0
+        click.echo(f"[info] Using semchunk semantic chunking (chunk_size={max_chars}, overlap={overlap_frac:.2f})")
+        
+        # Use explicit encoding name to ensure reliable tokenization with fallbacks
+        try:
+            click.echo(f"[debug] Using semchunk for semantic chunking")
+            # Try cl100k_base first
+            try:
+                click.echo(f"[debug] Attempting to use 'cl100k_base' encoding")
+                chunker = semchunk.chunkerify('cl100k_base', max_chars)
+            except (ValueError, KeyError) as e:
+                click.echo(f"[warning] cl100k_base encoding failed: {e}, trying p50k_base", err=True)
+                # Fall back to p50k_base if cl100k_base isn't available
+                chunker = semchunk.chunkerify('p50k_base', max_chars)
+                
+            # Process the text
+            chunks = chunker(text)
+            click.echo(f"[debug] Semchunk produced {len(chunks)} chunks")
+            
+            # Apply simple character-level overlap if requested
+            if overlap and chunks:
+                char_ov = int(overlap_frac * max_chars)
+                click.echo(f"[debug] Applying character overlap of {char_ov} chars")
+                overlapped: list[str] = []
+                
+                # First chunk is added as-is
+                overlapped.append(chunks[0])
+                
+                # Subsequent chunks get overlap from previous chunk
+                for idx in range(1, len(chunks)):
+                    prev = chunks[idx-1]  # Use original chunks to avoid accumulating overlaps
+                    curr = chunks[idx]
+                    
+                    # Only add overlap if previous chunk is long enough
+                    ov = prev[-char_ov:] if char_ov > 0 and len(prev) >= char_ov else ''
+                    
+                    # Add current chunk with overlap from previous
+                    overlapped.append(f"{ov}{curr}")
+                    
+                chunks = overlapped
+                click.echo(f"[debug] After applying overlap: {len(chunks)} chunks")
+            
+            # Validate chunks
+            if chunks and all(isinstance(c, str) for c in chunks):
+                # Log the first chunk's length for debugging
+                if chunks:
+                    click.echo(f"[debug] First chunk length: {len(chunks[0])}")
+                return chunks
+            else:
+                click.echo("[warning] semchunk returned invalid chunks, falling back", err=True)
+        except Exception as e:
+            click.echo(f"[warning] semchunk chunking failed with error: {e}", err=True)
+            click.echo("[debug] Falling back to alternative chunking method", err=True)
+    except ImportError:
+        # semchunk not installed
+        pass
+    except Exception as e:
+        click.echo(f"[warning] semchunk chunking failed: {e}", err=True)
+    # Next try adaptive chunking if enabled
     # Check both the parameter and the global variable
     global _adaptive_chunking
     use_adaptive_chunking = use_adaptive or _adaptive_chunking
@@ -257,11 +367,40 @@ def semantic_chunk_text(text: str, max_chars: int, overlap: int = 0, fast_mode: 
         else:
             click.echo("[warning] Semantic chunking failed to produce valid chunks, falling back to regular chunking", err=True)
             return _smart_chunk_text(text, max_chars, overlap)
-            
     except (ImportError, Exception) as e:
         click.echo(f"[warning] Semantic chunking not available or failed: {e}", err=True)
         click.echo("[info] Falling back to regular chunking", err=True)
         return _smart_chunk_text(text, max_chars, overlap)
+
+
+# ---------------------------------------------------------------------------
+# Language detection helper (optional – requires the *cld3* package)
+# ---------------------------------------------------------------------------
+
+
+def _detect_language(text: str) -> tuple[str | None, float]:
+    """Return `(lang, probability)` for *text* using *cld3* if available.
+
+    If *cld3* is missing or language cannot be determined, returns ``(None,
+    0.0)`` so that callers can treat the result as *unknown*.
+    """
+
+    if len(text) < 20:  # too little signal for detection ⇒ treat as unknown
+        return None, 0.0
+
+    try:
+        import cld3  # type: ignore
+
+        res = cld3.get_language(text)
+        if res is None:
+            return None, 0.0
+
+        return res.language, res.probability  # type: ignore[attr-defined]
+    except ImportError:
+        # cld3 not installed – silently degrade (handled by caller)
+        return None, 0.0
+    except Exception:  # pragma: no cover – unexpected detector failure
+        return None, 0.0
 
 
 def get_openai_client(api_key: str):
@@ -362,9 +501,17 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
 
         # 1. Try semantic chunking first (from advanced_rag)
         try:
-            # Use semantic chunking with configurable fast mode
-            # Use proper global variables for configuration
-            chunks = semantic_chunk_text(text, chunk_size, overlap, fast_mode=_use_fast_chunking, use_adaptive=_adaptive_chunking)
+            # Use semantic chunking with token-based size; fallback chunkers
+            # may interpret the value as characters, but semantic chunkers
+            # (sechunk, adaptive, etc.) honour token counts correctly.
+
+            chunks = semantic_chunk_text(
+                text,
+                max_chars=chunk_size,
+                overlap=overlap,
+                fast_mode=_use_fast_chunking,
+                use_adaptive=_adaptive_chunking,
+            )
             mode_str = "fast" if _use_fast_chunking else "precise"
             click.echo(f"[info] Used {mode_str} semantic chunking for text")
         except Exception as e:
@@ -384,14 +531,14 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
                     from langchain.text_splitter import RecursiveCharacterTextSplitter  # type: ignore
 
                     lc_splitter = RecursiveCharacterTextSplitter(
-                        chunk_size=chunk_size,
-                        chunk_overlap=overlap,
+                        chunk_size=chunk_size * 4,  # approximate char length
+                        chunk_overlap=overlap * 4,
                         separators=["\n\n", "\n", " "],
                     )
                     chunks = lc_splitter.split_text(text)
                 except Exception:
                     # 4. Absolute last-ditch fallback – a very dumb char splitter.
-                    chunks = _smart_chunk_text(text, chunk_size, overlap)
+                    chunks = _smart_chunk_text(text, chunk_size * 4, overlap * 4)
 
         for idx, chunk in enumerate(chunks):
             new_meta = dict(metadata)
@@ -594,6 +741,24 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
         ext = os.path.splitext(source)[1].lower()
         # PDF parsing
         if ext == '.pdf':
+            # Try Poppler pdftotext for fast text extraction (no OCR)
+            try:
+                import subprocess
+                # Extract plain text via poppler's pdftotext CLI
+                proc = subprocess.run(
+                    ["pdftotext", "-layout", "-enc", "UTF-8", source, "-"],
+                    capture_output=True,
+                    check=True,
+                )
+                text = proc.stdout.decode("utf-8", errors="ignore")
+                # Chunk and return Document objects using tokenwise splitter
+                return _chunk_text_tokenwise(text, {"source": source})
+            except FileNotFoundError:
+                # pdftotext not installed; fall back to existing PDF parser
+                pass
+            except Exception as e:
+                click.echo(f"[warning] pdftotext extraction failed: {e}", err=True)
+            # Fallback to Unstructured parser
             try:
                 from unstructured.partition.pdf import partition_pdf
                 from unstructured.documents.elements import Table
@@ -857,88 +1022,63 @@ def embed_and_upsert(
         is_openai_v1 = True
     
     click.echo(f"[info] Using OpenAI {'v1' if is_openai_v1 else 'v0'} API for embeddings")
-
-    from qdrant_client.http import models as rest
-
-    doc_iter = tqdm(iter_batches(docs, batch_size), total=(len(docs) + batch_size - 1) // batch_size, desc="Embedding & upserting")
-    
+    # Local helper to call the OpenAI embeddings API
     import time
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError
-
     def get_embeddings(texts, timeout=60):
         """Get embeddings with a timeout to prevent hanging"""
         start_time = time.time()
+        click.echo(f"[debug] Requesting embeddings for {len(texts)} texts using model '{model_name}'")
         try:
             if is_openai_v1:
-                # Newer openai>=1.0 client supports a `timeout` keyword argument
-                # but older stubs (or dummy objects in unit tests) may not.  Try
-                # passing the argument first and gracefully fall back to a call
-                # *without* it when it is not accepted.
+                click.echo(f"[debug] Using OpenAI v1 API for embeddings")
                 try:
-                    embeddings_response = openai_client.embeddings.create(
-                        model=model_name,
-                        input=texts,
-                        timeout=timeout,
-                    )
+                    resp = openai_client.embeddings.create(model=model_name, input=texts, timeout=timeout)
                 except TypeError as exc:
-                    # Retry without the timeout keyword for compatibility with
-                    # simplified/dummy embeddings clients used in tests.
                     if "timeout" in str(exc):
-                        embeddings_response = openai_client.embeddings.create(
-                            model=model_name,
-                            input=texts,
-                        )
+                        click.echo("[debug] Timeout not supported, retrying without timeout")
+                        resp = openai_client.embeddings.create(model=model_name, input=texts)
                     else:
                         raise
-                return [record.embedding for record in embeddings_response.data]
-            else:  # old openai<=0.28 style
-                embeddings_response = openai_client.Embedding.create(
-                    model=model_name, 
-                    input=texts,
-                    request_timeout=timeout
-                )
-                return [record["embedding"] for record in embeddings_response["data"]]
+                embeddings = [record.embedding for record in resp.data]
+            else:
+                click.echo(f"[debug] Using OpenAI v0 API for embeddings")
+                resp = openai_client.Embedding.create(model=model_name, input=texts, request_timeout=timeout)
+                embeddings = [record["embedding"] for record in resp["data"]]
+            if embeddings:
+                click.echo(f"[debug] Received embeddings with dimension: {len(embeddings[0])}")
+            return embeddings
         except Exception as e:
             elapsed = time.time() - start_time
             click.echo(f"[warning] Embedding API call failed after {elapsed:.1f}s: {e}", err=True)
             raise
 
-    for batch in doc_iter:
-        texts = [d.content for d in batch]
-        
-        # Use a thread with timeout to prevent hanging
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(get_embeddings, texts)
-            try:
-                embeddings = future.result(timeout=120)  # 2 minute timeout
-            except TimeoutError:
-                click.echo(f"[error] Embedding API call timed out after 120 seconds", err=True)
-                click.echo(f"[info] Retrying with smaller batch...", err=True)
-                
-                # Try with half the batch size if it's big enough
-                if len(texts) > 1:
-                    mid = len(texts) // 2
-                    try:
-                        # Process first half
-                        embeddings_first = get_embeddings(texts[:mid], timeout=60)
-                        # Process second half
-                        embeddings_second = get_embeddings(texts[mid:], timeout=60)
-                        # Combine results
-                        embeddings = embeddings_first + embeddings_second
-                    except Exception as e:
-                        click.echo(f"[error] Retry failed: {e}", err=True)
-                        click.echo(f"[warning] Skipping this batch", err=True)
-                        continue
-                else:
-                    click.echo(f"[warning] Batch size already minimal, skipping this text", err=True)
-                    continue
+    from qdrant_client.http import models as rest
 
+    # Embed & upsert in parallel by batches
+    batches = list(iter_batches(docs, batch_size))
+    total_batches = len(batches)
+    click.echo(f"[info] Embedding & upserting in {total_batches} batch(es) with up to {batch_size} texts each using {parallel} workers")
+    from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
+    import inspect
+    import time
+
+    def process_batch(batch):
+        texts = [d.content for d in batch]
+        try:
+            embeddings = get_embeddings(texts)
+        except Exception as e:
+            click.echo(f"[error] Batch embedding failed: {e}", err=True)
+            return
+
+        # Determine expected dimension
+        expected_size = len(embeddings[0]) if embeddings else None
+
+        # Build Qdrant points
         points = []
         for doc, vector in zip(batch, embeddings):
             metadata = doc.metadata.copy()
             content = doc.content
             if deterministic_id:
-                # Compute a deterministic UUID5 from metadata and content
                 try:
                     meta_str = json.dumps(metadata, sort_keys=True, default=str)
                 except Exception:
@@ -949,19 +1089,30 @@ def embed_and_upsert(
                 point_id = str(uuid.uuid4())
             payload = metadata
             payload["chunk_text"] = content
-            points.append(
-                rest.PointStruct(id=point_id, vector=vector, payload=payload)
-            )
+            points.append(rest.PointStruct(id=point_id, vector=vector, payload=payload))
 
-        # Upsert points with configurable parallel workers (default=15);
-        # Check if parallel parameter is supported by the client version
-        import inspect
+        # Verify vector dimensions
+        if expected_size is not None:
+            lengths = [len(v) for v in embeddings]
+            if any(l != expected_size for l in lengths):
+                click.echo(f"[warning] Vector dimension mismatch in batch: expected {expected_size}, got {set(lengths)}", err=True)
+            else:
+                click.echo(f"[info] Batch vectors verified: {len(lengths)} vectors of dimension {expected_size}")
+        else:
+            click.echo(f"[warning] No embeddings returned for batch", err=True)
+
+        # Upsert points
         client_upsert_params = inspect.signature(client.upsert).parameters
-        if 'parallel' in client_upsert_params:
+        if "parallel" in client_upsert_params:
             client.upsert(collection_name=collection, points=points, parallel=parallel)
         else:
-            # Parallel kwarg not supported by this client version
             client.upsert(collection_name=collection, points=points)
+
+    # Execute batches in parallel
+    with ThreadPoolExecutor(max_workers=parallel) as executor:
+        futures = [executor.submit(process_batch, batch) for batch in batches]
+        for _ in tqdm(as_completed(futures), total=total_batches, desc="Embedding & upserting"):
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -978,14 +1129,14 @@ def embed_and_upsert(
 )
 @click.option("--source", required=True, help="Path/URL/DSN pointing to the corpus to ingest.")
 @click.option("--collection", default="mattermost_rag_store", show_default=True, help="Qdrant collection name to create/use.")
-@click.option("--batch-size", type=int, default=100, show_default=True, help="Embedding batch size.")
+@click.option("--batch-size", type=int, default=128, show_default=True, help="Embedding batch size.")
 @click.option("--openai-api-key", envvar="OPENAI_API_KEY", help="Your OpenAI API key (can also use env var OPENAI_API_KEY)")
 @click.option("--qdrant-host", default="localhost", show_default=True, help="Qdrant host (ignored when --qdrant-url is provided).")
 @click.option("--qdrant-port", type=int, default=6333, show_default=True, help="Qdrant port (ignored when --qdrant-url is provided).")
 @click.option("--qdrant-url", help="Full Qdrant URL (e.g. https://*.qdrant.io:6333). Overrides host/port.")
 @click.option("--qdrant-api-key", envvar="QDRANT_API_KEY", help="Qdrant API key if required (Cloud).")
 @click.option("--distance", type=click.Choice(["Cosine", "Dot", "Euclid"], case_sensitive=False), default="Cosine", help="Vector distance metric.")
-@click.option("--chunk-size", type=int, default=500, show_default=True, help="Chunk size (tokens) for docling chunker.")
+@click.option("--chunk-size", type=int, default=1000, show_default=True, help="Chunk size (tokens) for docling chunker.")
 @click.option("--chunk-overlap", type=int, default=50, show_default=True, help="Overlap (tokens) between chunks.")
 @click.option("--crawl-depth", type=int, default=0, show_default=True, help="When SOURCE is a URL, crawl hyperlinks up to this depth (0=no crawl).")
 @click.option("--parallel", type=int, default=15, show_default=True, help="Number of parallel workers for Qdrant upsert.")
@@ -998,7 +1149,7 @@ def embed_and_upsert(
 @click.option("--rich-metadata/--no-rich-metadata", default=True, show_default=True, 
                help="Extract rich metadata from document content for better retrieval context.",
               is_flag=True)
-@click.option("--hierarchical-embeddings/--no-hierarchical-embeddings", default=False, show_default=True,
+@click.option("--hierarchical-embeddings/--no-hierarchical-embeddings", default=True, show_default=True,
                help="Create hierarchical embeddings at document, section, and chunk levels.",
               is_flag=True)
 @click.option("--entity-extraction/--no-entity-extraction", default=False, show_default=True,
@@ -1010,14 +1161,14 @@ def embed_and_upsert(
 @click.option("--adaptive-chunking/--no-adaptive-chunking", default=False, show_default=True,
                help="Use content-aware adaptive chunking instead of fixed-size chunking.",
               is_flag=True)
-@click.option("--deduplication/--no-deduplication", default=False, show_default=True,
-               help="Enable duplicate detection and removal during ingestion.",
+@click.option("--deduplication/--no-deduplication", default=True, show_default=True,
+              help="Enable duplicate detection and removal during ingestion.",
               is_flag=True)
 @click.option("--similarity-threshold", type=float, default=0.85, show_default=True, 
               help="Similarity threshold for near-duplicate detection (0-1).")
 @click.option("--merge-duplicates/--no-merge-duplicates", default=True, show_default=True,
               help="Merge similar documents instead of removing them.")
-@click.option("--validate-ingestion/--no-validate-ingestion", default=False, show_default=True,
+@click.option("--validate-ingestion/--no-validate-ingestion", default=True, show_default=True,
               help="Run post-ingestion validation to verify embedding quality.")
 @click.option("--run-test-queries/--no-run-test-queries", default=False, show_default=True,
               help="Run test queries after ingestion to verify retrieval.")
@@ -1033,6 +1184,29 @@ def embed_and_upsert(
     default="mattermost_rag_store_bm25_index.json",
     show_default=True,
     help="Path to write BM25 index JSON mapping point IDs to chunk_text.")
+# ------------------------------------------------------------------
+# Language filtering & validation behaviour
+# ------------------------------------------------------------------
+
+@click.option(
+    "--languages",
+    default="en",
+    show_default=True,
+    help="Comma-separated list of ISO language codes to *keep*. Use 'all' to disable filtering.",
+)
+@click.option(
+    "--lang-threshold",
+    type=float,
+    default=0.9,
+    show_default=True,
+    help="Minimum probability required from the language detector to trust the result (0-1).",
+)
+@click.option(
+    "--fail-on-validation-error/--no-fail-on-validation-error",
+    default=False,
+    show_default=True,
+    help="Exit with non-zero status if post-ingest validation fails.",
+)
 def cli(
     env_file: str | None,
     source: str,
@@ -1065,6 +1239,9 @@ def cli(
     section_embedding_model: str,
     chunk_embedding_model: str,
     bm25_index: str | None,
+    languages: str,
+    lang_threshold: float,
+    fail_on_validation_error: bool,
 ) -> None:
     """Ingest *SOURCE* into a Qdrant RAG database using OpenAI embeddings."""
 
@@ -1088,6 +1265,17 @@ def cli(
         os.environ["OPENAI_API_KEY"] = os.environ["openai_api_key"]
     if "QDRANT_API_KEY" not in os.environ and "qdrant_api_key" in os.environ:
         os.environ["QDRANT_API_KEY"] = os.environ["qdrant_api_key"]
+
+    # ------------------------------------------------------------------
+    # Configure language filter from CLI
+    # ------------------------------------------------------------------
+
+    global _allowed_languages, _lang_prob_threshold
+    if languages.lower() == "all":
+        _allowed_languages = set()  # empty set → filter disabled
+    else:
+        _allowed_languages = {lang.strip().lower() for lang in languages.split(',') if lang.strip()}
+    _lang_prob_threshold = max(0.0, min(1.0, lang_threshold))
 
     # ---------------------------------------------------------------------
     # Validate & set up dependencies
@@ -1123,6 +1311,28 @@ def cli(
     _use_fast_chunking = fast_chunking
     _adaptive_chunking = adaptive_chunking
     documents = load_documents(source, chunk_size, chunk_overlap, crawl_depth)
+
+    # ------------------------------------------------------------------
+    # Language filtering (optional, controlled by --languages CLI flag)
+    # ------------------------------------------------------------------
+
+    if _allowed_languages and _lang_prob_threshold > 0.0:
+        filtered_docs: list[Document] = []
+        skipped = 0
+        for doc in documents:
+            lang, prob = _detect_language(doc.content[:4000])  # only look at first part for speed
+            if lang is None:
+                # Unable to detect – keep document (conservative)            
+                filtered_docs.append(doc)
+                continue
+
+            if lang in _allowed_languages and prob >= _lang_prob_threshold:
+                filtered_docs.append(doc)
+            else:
+                skipped += 1
+        if skipped:
+            click.echo(f"[info] Language filter removed {skipped} documents (allowed={','.join(sorted(_allowed_languages))}, threshold={_lang_prob_threshold})")
+        documents = filtered_docs
     click.echo(f"[info] Loaded {len(documents)} document(s)")
 
     if not documents:
@@ -1565,6 +1775,7 @@ def cli(
                 documents,
                 openai_client,
                 batch_size=batch_size,
+                deterministic_id=True,
                 parallel=parallel,
             )
     else:
@@ -1575,6 +1786,7 @@ def cli(
             documents,
             openai_client,
             batch_size=batch_size,
+            deterministic_id=True,
             parallel=parallel,
         )
 
@@ -1618,6 +1830,11 @@ def cli(
                 for result in validation_summary.results:
                     status = "✅ PASS" if result.passed else "❌ FAIL"
                     click.echo(f"{status} [{result.test_name}] Score: {result.score:.2f} - {result.message}")
+
+                # Optionally abort with non-zero exit code if validation failed
+                if fail_on_validation_error and validation_summary.overall_status != "PASSED":
+                    click.echo("[error] Validation did not pass and --fail-on-validation-error is set. Exiting.", err=True)
+                    raise SystemExit(2)
                 
                 # Print critical issues
                 if validation_summary.critical_issues:

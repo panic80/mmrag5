@@ -11,15 +11,36 @@ This module contains implementations of advanced RAG techniques from RAGIMPROVE.
 """
 
 import re
-import os
 import json
 import logging
 import time
-from typing import List, Dict, Any, Optional, Union, Tuple, Callable
+from typing import List, Dict, Any, Union
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# Setup logging - use a thread-safe approach
+import threading
+
+# Lock for thread-safe logger initialization
+_logger_lock = threading.RLock()
+
+# Thread-local storage for loggers
+_thread_local = threading.local()
+
+def get_logger():
+    """Get a thread-local logger instance to ensure thread safety."""
+    if not hasattr(_thread_local, 'logger'):
+        with _logger_lock:
+            # Configure root logger only once
+            if not logging.getLogger().handlers:
+                logging.basicConfig(level=logging.INFO, 
+                                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            
+            # Create thread-local logger instance
+            _thread_local.logger = logging.getLogger(f"{__name__}.{threading.get_ident()}")
+    
+    return _thread_local.logger
+
+# For backwards compatibility - replace direct logger usage
+logger = get_logger()
 
 # Define types
 Document = Dict[str, Any]  # Will include at least 'content' and 'metadata'
@@ -41,6 +62,9 @@ def semantic_chunk_text(text: str, max_chars: int = 1000, fast_mode: bool = True
     Returns:
         List of semantically chunked text segments
     """
+    # Get thread-local logger
+    thread_logger = get_logger()
+    
     # Fast mode uses a simpler, much faster approach
     if fast_mode:
         return _fast_semantic_chunk(text, max_chars)
@@ -50,11 +74,11 @@ def semantic_chunk_text(text: str, max_chars: int = 1000, fast_mode: bool = True
         from transformers import pipeline
         import torch
         
-        logger.info("Initializing semantic chunking with transformers")
+        thread_logger.info("Initializing semantic chunking with transformers")
         
         # Check for GPU availability
         device = 0 if torch.cuda.is_available() else -1
-        logger.info(f"Using device: {'GPU' if device == 0 else 'CPU'}")
+        thread_logger.info(f"Using device: {'GPU' if device == 0 else 'CPU'}")
         
         # Initialize zero-shot classification pipeline
         classifier = pipeline(
@@ -68,10 +92,10 @@ def semantic_chunk_text(text: str, max_chars: int = 1000, fast_mode: bool = True
         paragraphs = [p.strip() for p in paragraphs if p.strip()]
         
         if not paragraphs:
-            logger.warning("No paragraphs found in text")
+            thread_logger.warning("No paragraphs found in text")
             return [text] if text else []
             
-        logger.info(f"Split text into {len(paragraphs)} paragraphs")
+        thread_logger.info(f"Split text into {len(paragraphs)} paragraphs")
         
         # First pass: Group paragraphs by max_chars
         initial_chunks = []
@@ -92,7 +116,7 @@ def semantic_chunk_text(text: str, max_chars: int = 1000, fast_mode: bool = True
         if current_chunk:
             initial_chunks.append("\n\n".join(current_chunk))
             
-        logger.info(f"Initial chunking resulted in {len(initial_chunks)} chunks")
+        thread_logger.info(f"Initial chunking resulted in {len(initial_chunks)} chunks")
         
         # If only one chunk, just return it
         if len(initial_chunks) <= 1:
@@ -124,7 +148,7 @@ def semantic_chunk_text(text: str, max_chars: int = 1000, fast_mode: bool = True
                 topic = result["labels"][0] 
                 confidence = result["scores"][0]
                 
-                logger.info(f"Chunk {i+1}: Topic '{topic}' (confidence: {confidence:.2f})")
+                thread_logger.info(f"Chunk {i+1}: Topic '{topic}' (confidence: {confidence:.2f})")
                 
                 # Store chunk with topic information
                 refined_chunks.append({
@@ -133,7 +157,7 @@ def semantic_chunk_text(text: str, max_chars: int = 1000, fast_mode: bool = True
                     "confidence": confidence
                 })
             except Exception as e:
-                logger.error(f"Topic classification failed for chunk {i+1}: {e}")
+                thread_logger.error(f"Topic classification failed for chunk {i+1}: {e}")
                 refined_chunks.append({"text": chunk, "topic": "unknown"})
         
         # Optionally merge chunks with same topic (if they're small enough)
@@ -154,13 +178,13 @@ def semantic_chunk_text(text: str, max_chars: int = 1000, fast_mode: bool = True
         if current_merged:
             merged_chunks.append(current_merged)
             
-        logger.info(f"Final semantic chunking produced {len(merged_chunks)} chunks")
+        thread_logger.info(f"Final semantic chunking produced {len(merged_chunks)} chunks")
         
         # Return just the text content
         return [chunk["text"] for chunk in merged_chunks]
         
     except Exception as e:
-        logger.error(f"Semantic chunking failed: {e}")
+        thread_logger.error(f"Semantic chunking failed: {e}")
         # Fallback to fast chunking
         return _fast_semantic_chunk(text, max_chars)
 
@@ -179,7 +203,10 @@ def _fast_semantic_chunk(text: str, max_chars: int = 1000) -> List[str]:
     Returns:
         List of semantically chunked text segments
     """
-    logger.info("Using fast semantic chunking")
+    # Get thread-local logger
+    thread_logger = get_logger()
+    
+    thread_logger.info("Using fast semantic chunking")
     
     # Quick check for empty text
     if not text or len(text.strip()) == 0:
@@ -195,19 +222,14 @@ def _fast_semantic_chunk(text: str, max_chars: int = 1000) -> List[str]:
     # Identify headings and section boundaries
     # Common heading patterns in markdown, restructured text and plain text
     heading_patterns = [
-        r'^#+\s+.+$',                  # Markdown heading
-        r'^[A-Z][\w\s]+:$',            # Title with colon
-        r'^[IVX]+\.\s+.+$',            # Roman numeral sections
-        r'^\d+\.\d*\s+.+$',            # Numbered sections
-        r'^[A-Z][A-Z\s]+$',            # ALL CAPS heading
-        r'^={3,}$', r'^-{3,}$',        # Underline style headings
-        r'^[A-Z][a-z]+\s+\d+:',        # "Section 1:" style$',                  # Markdown heading
-        r'^[A-Z][\w\s]+:$',            # Title with colon
-        r'^[IVX]+\.\s+.+$',            # Roman numeral sections
-        r'^\d+\.\d*\s+.+$',            # Numbered sections
-        r'^[A-Z][A-Z\s]+$',            # ALL CAPS heading
-        r'^={3,}$', r'^-{3,}$',        # Underline style headings
-        r'^[A-Z][a-z]+\s+\d+:',        # "Section 1:" style
+        r'^#+\s+.+$',                # Markdown heading
+        r'^[A-Z][\w\s]+:$',          # Title with colon
+        r'^[IVX]+\.\s+.+$',          # Roman numeral sections
+        r'^\d+\.\d*\s+.+$',        # Numbered sections
+        r'^[A-Z][A-Z\s]+$',          # ALL CAPS heading
+        r'^={3,}$',                  # Underline style heading (===)
+        r'^-{3,}$',                  # Underline style heading (---)
+        r'^[A-Z][a-z]+\s+\d+:',      # "Section 1:" style
     ]
     
     heading_pattern = re.compile('|'.join(f'({pattern})' for pattern in heading_patterns), re.MULTILINE)
@@ -237,11 +259,21 @@ def _fast_semantic_chunk(text: str, max_chars: int = 1000) -> List[str]:
     if current_chunk:
         chunks.append("\n\n".join(current_chunk))
     
-    logger.info(f"Fast semantic chunking produced {len(chunks)} chunks")
+    thread_logger.info(f"Fast semantic chunking produced {len(chunks)} chunks")
     return chunks
 
 
-def _simple_chunk_text(text: str, max_chars: int) -> List[str]:
+def _with_logger(func):
+    """Decorator to inject thread-local logger into function."""
+    def wrapper(*args, **kwargs):
+        # Add thread_logger to kwargs
+        kwargs['thread_logger'] = get_logger()
+        return func(*args, **kwargs)
+    return wrapper
+
+
+@_with_logger
+def _simple_chunk_text(text: str, max_chars: int, thread_logger=None) -> List[str]:
     """
     Simple fallback chunking method that splits text by paragraphs.
     
@@ -252,7 +284,7 @@ def _simple_chunk_text(text: str, max_chars: int) -> List[str]:
     Returns:
         List of text chunks
     """
-    logger.info("Using simple chunking as fallback")
+    thread_logger.info("Using simple chunking as fallback")
     
     # Split text into paragraphs
     paragraphs = re.split(r'\n\s*\n', text)
@@ -305,7 +337,7 @@ def _simple_chunk_text(text: str, max_chars: int) -> List[str]:
     if current_chunk:
         chunks.append("\n\n".join(current_chunk))
     
-    logger.info(f"Simple chunking produced {len(chunks)} chunks")
+    thread_logger.info(f"Simple chunking produced {len(chunks)} chunks")
     return chunks
 
 
@@ -313,8 +345,9 @@ def _simple_chunk_text(text: str, max_chars: int) -> List[str]:
 # 2. QUERY EXPANSION
 # -------------------------------------------------------------------------------
 
+@_with_logger
 def expand_query(query_text: str, openai_client: OpenAIClient, model: str = "gpt-4.1-mini", 
-                 max_expansions: int = 4) -> List[str]:
+                 max_expansions: int = 4, thread_logger=None) -> List[str]:
     """
     Expand query with LLM rewrites for better retrieval.
     
@@ -323,15 +356,16 @@ def expand_query(query_text: str, openai_client: OpenAIClient, model: str = "gpt
         openai_client: OpenAI client (v0 or v1)
         model: The model to use for expansion
         max_expansions: Maximum number of expanded queries to return
+        thread_logger: Thread-local logger (injected by decorator)
         
     Returns:
         List of expanded queries (including original query)
     """
     if not query_text or not query_text.strip():
-        logger.warning("Empty query provided for expansion")
+        thread_logger.warning("Empty query provided for expansion")
         return [query_text] if query_text else []
         
-    logger.info(f"Expanding query: '{query_text}'")
+    thread_logger.info(f"Expanding query: '{query_text}'")
     
     system_msg = {
         "role": "system", 
@@ -352,7 +386,7 @@ Ensure each query is a complete, well-formed question or request.
         # Detect OpenAI client version and use appropriate call
         if hasattr(openai_client, "chat") and hasattr(openai_client.chat, "completions"):
             # OpenAI Python v1.x
-            logger.info(f"Using OpenAI v1 API with model {model}")
+            thread_logger.info(f"Using OpenAI v1 API with model {model}")
             response = openai_client.chat.completions.create(
                 model=model,
                 response_format={"type": "json_object"},
@@ -363,7 +397,7 @@ Ensure each query is a complete, well-formed question or request.
             json_content = response.choices[0].message.content
         else:
             # OpenAI Python v0.x
-            logger.info(f"Using OpenAI v0 API with model {model}")
+            thread_logger.info(f"Using OpenAI v0 API with model {model}")
             response = openai_client.ChatCompletion.create(
                 model=model,
                 messages=[system_msg, user_msg],
@@ -374,12 +408,11 @@ Ensure each query is a complete, well-formed question or request.
         
         # Parse the JSON response
         try:
-            # Remove any non-JSON text that might be in the response
-            json_string = re.search(r'(\[\s*".*"\s*\]|\{\s*".*"\s*\})', json_content, re.DOTALL)
-            if json_string:
-                json_content = json_string.group(0)
-                
-            data = json.loads(json_content)
+            # Extract JSON safely from potentially mixed text
+            cleaned_json = extract_json_safely(json_content)
+            
+            # Parse the cleaned JSON content
+            data = json.loads(cleaned_json)
             
             # Handle different possible JSON structures
             if isinstance(data, list):
@@ -407,7 +440,7 @@ Ensure each query is a complete, well-formed question or request.
             elif query_text not in expanded_queries:
                 expanded_queries.append(query_text)
                 
-            logger.info(f"Generated {len(expanded_queries)} expanded queries")
+            thread_logger.info(f"Generated {len(expanded_queries)} expanded queries")
             
             # Limit to max_expansions
             if len(expanded_queries) > max_expansions:
@@ -416,12 +449,12 @@ Ensure each query is a complete, well-formed question or request.
             return expanded_queries
             
         except (json.JSONDecodeError, ValueError) as e:
-            logger.error(f"Failed to parse expansion JSON: {e}")
-            logger.error(f"Raw response: {json_content}")
+            thread_logger.error(f"Failed to parse expansion JSON: {e}")
+            thread_logger.error(f"Raw response: {json_content}")
             return [query_text]
             
     except Exception as e:
-        logger.error(f"Query expansion failed: {e}")
+        thread_logger.error(f"Query expansion failed: {e}")
         return [query_text]  # Return original query on failure
 
 
@@ -429,9 +462,10 @@ Ensure each query is a complete, well-formed question or request.
 # 3. RAG SELF-EVALUATION
 # -------------------------------------------------------------------------------
 
+@_with_logger
 def evaluate_rag_quality(query: str, retrieved_chunks: Union[str, List[str]], 
                        generated_answer: str, openai_client: OpenAIClient,
-                       model: str = "gpt-4.1-nano") -> Dict[str, Any]:
+                       model: str = "gpt-4.1-nano", thread_logger=None) -> Dict[str, Any]:
     """
     Evaluate the quality of RAG responses for continuous improvement.
     
@@ -441,11 +475,12 @@ def evaluate_rag_quality(query: str, retrieved_chunks: Union[str, List[str]],
         generated_answer: The answer generated from the retrieved chunks
         openai_client: OpenAI client (v0 or v1)
         model: The model to use for evaluation
+        thread_logger: Thread-local logger (injected by decorator)
         
     Returns:
         Dictionary with evaluation scores and feedback
     """
-    logger.info(f"Evaluating RAG quality for query: '{query}'")
+    thread_logger.info(f"Evaluating RAG quality for query: '{query}'")
     
     # Format chunks if they're passed as a list
     if isinstance(retrieved_chunks, list):
@@ -518,7 +553,7 @@ Please provide your evaluation following the criteria in the system prompt."""
         # Detect OpenAI client version and use appropriate call
         if hasattr(openai_client, "chat") and hasattr(openai_client.chat, "completions"):
             # OpenAI Python v1.x
-            logger.info(f"Using OpenAI v1 API with model {model} for evaluation")
+            thread_logger.info(f"Using OpenAI v1 API with model {model} for evaluation")
             response = openai_client.chat.completions.create(
                 model=model,
                 response_format={"type": "json_object"},
@@ -532,7 +567,7 @@ Please provide your evaluation following the criteria in the system prompt."""
             json_content = response.choices[0].message.content
         else:
             # OpenAI Python v0.x
-            logger.info(f"Using OpenAI v0 API with model {model} for evaluation")
+            thread_logger.info(f"Using OpenAI v0 API with model {model} for evaluation")
             response = openai_client.ChatCompletion.create(
                 model=model,
                 messages=[
@@ -546,7 +581,11 @@ Please provide your evaluation following the criteria in the system prompt."""
         
         # Parse the evaluation JSON
         try:
-            evaluation = json.loads(json_content)
+            # Extract JSON safely from potentially mixed text
+            cleaned_json = extract_json_safely(json_content)
+            
+            # Parse the cleaned JSON
+            evaluation = json.loads(cleaned_json)
             
             # Add metadata
             evaluation["meta"] = {
@@ -556,12 +595,12 @@ Please provide your evaluation following the criteria in the system prompt."""
                 "answer_length": len(generated_answer)
             }
             
-            logger.info(f"RAG evaluation complete. Overall score: {evaluation.get('scores', {}).get('overall', 'N/A')}")
+            thread_logger.info(f"RAG evaluation complete. Overall score: {evaluation.get('scores', {}).get('overall', 'N/A')}")
             return evaluation
             
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse evaluation JSON: {e}")
-            logger.error(f"Raw response: {json_content}")
+            thread_logger.error(f"Failed to parse evaluation JSON: {e}")
+            thread_logger.error(f"Raw response: {json_content}")
             return {
                 "error": "Failed to parse evaluation response",
                 "scores": {"overall": 0},
@@ -569,7 +608,7 @@ Please provide your evaluation following the criteria in the system prompt."""
             }
             
     except Exception as e:
-        logger.error(f"RAG evaluation failed: {e}")
+        thread_logger.error(f"RAG evaluation failed: {e}")
         return {
             "error": str(e),
             "scores": {"overall": 0},
@@ -581,8 +620,9 @@ Please provide your evaluation following the criteria in the system prompt."""
 # 4. CONTEXTUAL COMPRESSION
 # -------------------------------------------------------------------------------
 
+@_with_logger
 def contextual_compression(query: str, docs: List[Any], openai_client: OpenAIClient, 
-                         model: str = "gpt-4.1-nano") -> List[Any]:
+                         model: str = "gpt-4.1-nano", thread_logger=None) -> List[Any]:
     """
     Focus retrieved documents on query-relevant parts to reduce hallucination.
     
@@ -591,14 +631,15 @@ def contextual_compression(query: str, docs: List[Any], openai_client: OpenAICli
         docs: List of retrieved documents (e.g. Qdrant search results)
         openai_client: OpenAI client (v0 or v1)
         model: The model to use for compression
+        thread_logger: Thread-local logger (injected by decorator)
         
     Returns:
         List of documents with compressed text added
     """
-    logger.info(f"Performing contextual compression for query: '{query}'")
+    thread_logger.info(f"Performing contextual compression for query: '{query}'")
     
     if not docs:
-        logger.warning("No documents provided for compression")
+        thread_logger.warning("No documents provided for compression")
         return docs
     
     compressed_docs = []
@@ -613,17 +654,17 @@ def contextual_compression(query: str, docs: List[Any], openai_client: OpenAICli
         text = payload.get("chunk_text", "")
         
         if not text:
-            logger.warning(f"Document {i} has no chunk_text, skipping compression")
+            thread_logger.warning(f"Document {i} has no chunk_text, skipping compression")
             compressed_docs.append(doc)
             continue
             
         # Skip very short texts that don't need compression
         if len(text) < 200:
-            logger.info(f"Document {i} is too short for compression ({len(text)} chars)")
+            thread_logger.info(f"Document {i} is too short for compression ({len(text)} chars)")
             compressed_docs.append(doc)
             continue
             
-        logger.info(f"Compressing document {i} ({len(text)} chars)")
+        thread_logger.info(f"Compressing document {i} ({len(text)} chars)")
         
         # Create system and user messages
         system_msg = {
@@ -674,11 +715,11 @@ Preserve the original wording of the important parts."""
             compressed_len = len(compressed_text)
             compression_ratio = compressed_len / original_len if original_len > 0 else 1.0
             
-            logger.info(f"Compressed doc {i}: {original_len} → {compressed_len} chars ({compression_ratio:.2%})")
+            thread_logger.info(f"Compressed doc {i}: {original_len} → {compressed_len} chars ({compression_ratio:.2%})")
             
             # Check for empty or too-short compression result
             if len(compressed_text) < 50 or compression_ratio < 0.1:
-                logger.warning(f"Compression too aggressive for doc {i}, using original")
+                thread_logger.warning(f"Compression too aggressive for doc {i}, using original")
                 compressed_text = text
             
             # Save compressed text in document
@@ -706,12 +747,12 @@ Preserve the original wording of the important parts."""
             compressed_docs.append(new_doc)
             
         except Exception as e:
-            logger.error(f"Compression failed for document {i}: {e}")
+            thread_logger.error(f"Compression failed for document {i}: {e}")
             # Keep original document if compression fails
             compressed_docs.append(doc)
     
     elapsed_time = time.time() - start_time
-    logger.info(f"Contextual compression complete for {len(docs)} documents in {elapsed_time:.2f} seconds")
+    thread_logger.info(f"Contextual compression complete for {len(docs)} documents in {elapsed_time:.2f} seconds")
     
     return compressed_docs
 
@@ -736,3 +777,62 @@ def get_timestamp():
     """Return current timestamp in string format"""
     from datetime import datetime
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def extract_json_safely(text: str) -> str:
+    """
+    Safely extract JSON content from a text string, handling various LLM response formats.
+    
+    Args:
+        text: Text that may contain JSON (potentially with other text before/after)
+        
+    Returns:
+        Cleaned text containing only the JSON portion
+    """
+    # First, try to find JSON enclosed in triple backticks
+    if '```' in text:
+        # Extract content between code blocks with json or JSON label
+        match = re.search(r'```(?:json|JSON)?\n([\s\S]*?)\n```', text)
+        if match:
+            return match.group(1).strip()
+            
+    # Next, try to find JSON enclosed in single backticks
+    if '`' in text:
+        match = re.search(r'`([\s\S]*?)`', text)
+        if match:
+            candidate = match.group(1).strip()
+            try:
+                # Test if valid JSON
+                json.loads(candidate)
+                return candidate
+            except json.JSONDecodeError:
+                pass
+    
+    # Try to extract JSON by looking for brackets/braces patterns
+    # Find a JSON object
+    obj_match = re.search(r'(\{[\s\S]*\})', text)
+    if obj_match:
+        # Validate this is actually JSON by trying a stricter pattern
+        strict_obj = re.search(r'(\{(?:[^{}]|"(?:\\.|[^"\\])*"|\{(?:[^{}]|"(?:\\.|[^"\\])*")*\})*\})', obj_match.group(0))
+        if strict_obj:
+            try:
+                json.loads(strict_obj.group(0))
+                return strict_obj.group(0)
+            except json.JSONDecodeError:
+                pass
+    
+    # Find a JSON array
+    arr_match = re.search(r'(\[[\s\S]*\])', text)
+    if arr_match:
+        # Validate this is actually JSON by trying a stricter pattern
+        strict_arr = re.search(r'(\[(?:[^\[\]]|"(?:\\.|[^"\\])*"|\[(?:[^\[\]]|"(?:\\.|[^"\\])*")*\])*\])', arr_match.group(0))
+        if strict_arr:
+            try:
+                json.loads(strict_arr.group(0))
+                return strict_arr.group(0)
+            except json.JSONDecodeError:
+                pass
+    
+    # If we couldn't find valid JSON, return the original text
+    # It will still fail later, but at least we tried to clean it
+    return text
