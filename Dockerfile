@@ -1,10 +1,10 @@
 # -----------------------------------------------------------------------------
-# Dockerfile (lower‑case name to match docker‑compose.yml)                     |
+# Dockerfile (lower?case name to match docker?compose.yml)                     |
 # -----------------------------------------------------------------------------
-# This image bundles the Flask‑based Mattermost slash‑command app together     |
+# This image bundles the Flask?based Mattermost slash?command app together     |
 # with the ingestion / query helpers (ingest_rag.py, query_rag.py).            |
-# It installs all Python dependencies – including docling (fetched from GitHub)|
-# – and their system prerequisites.                                            |
+# It installs all Python dependencies � including docling (fetched from GitHub)|
+# � and their system prerequisites.                                            |
 # -----------------------------------------------------------------------------
 
 FROM python:3.11-slim AS base
@@ -13,7 +13,7 @@ FROM python:3.11-slim AS base
 ARG DEBIAN_FRONTEND=noninteractive
 
 # -----------------------------------------------------------------------------
-# Install OS‑level packages needed to build Python wheels (lxml, etc.) and git
+# Install OS?level packages needed to build Python wheels (lxml, etc.) and git
 # for the docling dependency that is pulled straight from GitHub.
 # -----------------------------------------------------------------------------
 
@@ -35,7 +35,7 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Pre‑copy requirements to leverage Docker layer caching when only source
+# Pre?copy requirements to leverage Docker layer caching when only source
 # files change.
 COPY requirements.txt ./
 
@@ -43,13 +43,10 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir --upgrade pip \
  && pip install --no-cache-dir tiktoken>=0.3.0 mpire>=2.7.0
 
-# Then install semchunk separately to ensure dependencies are in place
-RUN pip install --no-cache-dir semchunk==2.2.2 \
- && python -c "import semchunk; print('Semchunk imported successfully')"
 
 # Finally install the rest of the requirements
 RUN pip install --no-cache-dir -r requirements.txt \
- && pip install --no-cache-dir langchain unstructured
+ && pip install --no-cache-dir langchain langchain-community unstructured requests bs4
 
 # -----------------------------------------------------------------------------
 # Copy the rest of the application code
@@ -60,5 +57,5 @@ COPY . .
 # Default port used by the Flask server
 EXPOSE 5000
 
-# Entrypoint – can be overridden by docker‑compose.yml if needed
+# Entrypoint � can be overridden by docker?compose.yml if needed
 CMD ["python3", "server.py"]

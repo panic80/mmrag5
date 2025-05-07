@@ -383,6 +383,10 @@ def main(
         key=lambda x: x["score"], 
         reverse=True
     )][:k]
+    if any(p is None for p in scored):
+        click.echo(f"[debug] 'scored' contains {sum(1 for p in scored if p is None)} None values after initial creation from unique_results. IDs of None points: {[getattr(p, 'id', 'N/A_None_Point') for p in unique_results.values() if p['point'] is None]}", err=True)
+    # Remove any None entries to prevent downstream errors
+    scored = [p for p in scored if p is not None]
     
     if use_expansion and len(expanded_queries) > 1:
         click.echo(f"[info] Merged {len(all_results)} results from {len(expanded_queries)} queries into {len(scored)} unique results")
@@ -572,10 +576,10 @@ def main(
                         id2text[rec.id] = text
                 if offset is None:
                     break
-        # Guard against empty corpus – rank_bm25 crashes with ZeroDivisionError
+        # Guard against empty corpus - rank_bm25 crashes with ZeroDivisionError
         if not id2text:
             click.echo(
-                "[warning] No documents with 'chunk_text' payload – skipping BM25 component of hybrid search.",
+                "[warning] No documents with 'chunk_text' payload - skipping BM25 component of hybrid search.",
                 err=True,
             )
         else:
@@ -584,7 +588,7 @@ def main(
             # rank_bm25 expects at least one document; otherwise it raises ZeroDivisionError
             if not tokenized:
                 click.echo(
-                    "[warning] BM25 tokenization produced an empty corpus – skipping BM25 component of hybrid search.",
+                    "[warning] BM25 tokenization produced an empty corpus - skipping BM25 component of hybrid search.",
                     err=True,
                 )
             else:
@@ -596,8 +600,15 @@ def main(
                 bm25_sorted = sorted(enumerate(bm25_scores), key=lambda x: x[1], reverse=True)[:top_n]
                 bm25_rank = {ids[idx]: rank + 1 for rank, (idx, _) in enumerate(bm25_sorted)}
 
+                # --- Debugging: Check for None in scored before processing ---
+                if any(p is None for p in scored):
+                    click.echo("[debug] Found None in 'scored' list before vector ranking.", err=True)
+                    # Optional: Log the contents of scored for more details if needed
+                    # click.echo(f"[debug] scored contents: {scored}", err=True)
+                # --- End Debugging ---
+
                 # Vector rankings (from initial Qdrant results)
-                vec_rank = {point.id: rank for rank, point in enumerate(scored, start=1)}
+                vec_rank = {point.id: rank for rank, point in enumerate(scored, start=1) if point is not None}
 
                 # Reciprocal Rank Fusion
                 fused_scores: dict[str, float] = {}
@@ -614,7 +625,7 @@ def main(
 
                 # Build new scored list with payload lookup
                 from types import SimpleNamespace
-                payload_map = {point.id: getattr(point, 'payload', {}) or {} for point in scored}
+                payload_map = {point.id: getattr(point, 'payload', {}) or {} for point in scored if point is not None}
                 # Fetch any BM25-only payloads
                 for pid in fused_ids:
                     if pid not in payload_map:
@@ -627,7 +638,7 @@ def main(
                             payload_map[pid] = {}
                 # Replace scored with fused SimpleNamespace objects
                 # Preserve vector from original scored points
-                vector_map = {p.id: getattr(p, 'vector', None) for p in orig_scored}
+                vector_map = {p.id: getattr(p, 'vector', None) for p in orig_scored if p is not None}
                 scored = [
                     SimpleNamespace(
                         id=pid,
@@ -641,7 +652,7 @@ def main(
         # If BM25 fusion skipped because of empty corpus, keep original 'scored'
 
         # Note: if no BM25 corpus was available, we simply keep the original
-        # `scored` list coming from the pure‑vector Qdrant search so that the
+        # `scored` list coming from the pure-vector Qdrant search so that the
         # rest of the pipeline (answer generation, summaries, etc.) continues
         # to function as expected.
     # MMR re-ranking for diversity + relevance (deep search)
@@ -747,7 +758,7 @@ def main(
                     compression_ratio = payload.get("compression_ratio", 1.0)
                     snippet_text = snippet_text[:200].strip()
                     if snippet_text:
-                        click.echo(f"    compressed snippet [{compression_ratio:.1%}]: {snippet_text}…")
+                        click.echo(f"    compressed snippet [{compression_ratio:.1%}]: {snippet_text}...")
                 else:
                     # For hierarchical results, check text field first (used by document/section levels)
                     if hierarchical_search and "text" in payload:
@@ -762,9 +773,9 @@ def main(
                         if hierarchical_search and "level" in payload:
                             level_val = payload.get("level", "")
                             level_tag = f"[{level_val.upper()}] " if level_val else ""
-                            click.echo(f"    {level_tag}snippet: {snippet_text}…")
+                            click.echo(f"    {level_tag}snippet: {snippet_text}...")
                         else:
-                            click.echo(f"    snippet: {snippet_text}…")
+                            click.echo(f"    snippet: {snippet_text}...")
         
         # If we used query expansion, show a summary of the merged results
         if use_expansion and len(expanded_queries) > 1:
@@ -793,7 +804,7 @@ def main(
                     max_context_tokens = int(limit * 0.8)
                     break
             
-            # Simple token estimator (approximate - 1 token ≈ 4 chars in English)
+            # Simple token estimator (approximate - 1 token ~ 4 chars in English)
             def estimate_tokens(text: str) -> int:
                 return int(len(text) / 4) + 1
             
@@ -891,7 +902,7 @@ def main(
             max_context_tokens = int(limit * 0.8)
             break
     
-    # Simple token estimator (approximate - 1 token ≈ 4 chars in English)
+    # Simple token estimator (approximate - 1 token ~ 4 chars in English)
     def estimate_tokens(text: str) -> int:
         return int(len(text) / 4) + 1
     
@@ -995,7 +1006,7 @@ def main(
                 if strengths:
                     click.secho("\nStrengths:", fg="green")
                     for s in strengths:
-                        click.echo(f"  ✓ {s}")
+                        click.echo(f"  - {s}")
                 
                 weaknesses = feedback.get('weaknesses', [])
                 if weaknesses:
@@ -1007,7 +1018,7 @@ def main(
                 if suggestions:
                     click.secho("\nSuggestions:", fg="blue")
                     for s in suggestions:
-                        click.echo(f"  → {s}")
+                        click.echo(f"  -> {s}")
                 
         except ImportError:
             click.echo("[warning] RAG evaluation failed - advanced_rag module not found", err=True)

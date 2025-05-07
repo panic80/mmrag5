@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
+# -*- coding: cp1252 -*-
 
 """ingest_rag.py
 
-CLI utility for building a Retrieval‑Augmented Generation (RAG) vector
+CLI utility for building a Retrieval-Augmented Generation (RAG) vector
 database with Qdrant.
 
-The tool is intentionally *source‑agnostic* and *schema‑agnostic* – it relies
+The tool is intentionally *source-agnostic* and *schema-agnostic* � it relies
 on the `docling` project to ingest documents from *any* kind of data source
-(local files, URLs, databases, etc.).  After the documents are loaded, their
+(local files, URLs, databases, etc.). After the documents are loaded, their
 content is embedded with OpenAI's `text-embedding-3-large` model and stored in
 a Qdrant collection.
 
@@ -23,7 +24,7 @@ Requirements
 Environment variables
 ---------------------
 OPENAI_API_KEY
-    Your OpenAI API key.  It can also be passed explicitly with the
+    Your OpenAI API key. It can also be passed explicitly with the
     ``--openai-api-key`` CLI option (the environment variable takes
     precedence).
 QDRANT_API_KEY
@@ -59,20 +60,20 @@ _use_fast_chunking: bool = True
 _adaptive_chunking: bool = False
 
 # Default set of ISO language codes that will be accepted by the language
-# filter.  The list is modified by the CLI option ``--languages``.
+# filter. The list is modified by the CLI option ``--languages``.
 _allowed_languages: set[str] = {"en"}
 
 # Minimum probability reported by the language detector for us to trust the
 # detection result.
 _lang_prob_threshold: float = 0.9
 
-# Optional dependencies – import lazily so that the error message is clearer.
+# Optional dependencies � import lazily so that the error message is clearer.
 
 
 def _lazy_import(name: str):
     try:
         return __import__(name)
-    except ImportError as exc:  # pragma: no cover – dev convenience
+    except ImportError as exc:  # pragma: no cover � dev convenience
         click.echo(
             f"[fatal] The Python package '{name}' is required but not installed.\n"
             f"Install it with: pip install {name}",
@@ -110,7 +111,7 @@ def iter_batches(seq: Sequence[Document], batch_size: int) -> Iterable[List[Docu
             batch = []
     if batch:
         yield batch
- 
+
 def chunk_text(text: str, max_chars: int) -> list[str]:
     """Split *text* into chunks of up to *max_chars* characters, breaking on whitespace."""
     chunks: list[str] = []
@@ -128,16 +129,16 @@ def chunk_text(text: str, max_chars: int) -> list[str]:
             chunks.append(chunk)
         start = end
     return chunks
-    
+
 def _smart_chunk_text(text: str, max_chars: int, overlap: int = 0) -> list[str]:
     """
     # For now, use paragraph-based chunking
     return _smart_chunk_text(text, max_chars, overlap)
     Chunk text on paragraph and sentence boundaries up to max_chars,
-    
+
     This is the original chunking method, kept as fallback if semantic chunking fails.
     and apply character-level overlap between chunks.
-    
+
     This is the original chunking method, kept as fallback if semantic chunking fails.
     """
     # Split into paragraphs
@@ -191,7 +192,7 @@ def _smart_chunk_text(text: str, max_chars: int, overlap: int = 0) -> list[str]:
         if chunk:
             chunks.append(chunk)
     # ------------------------------------------------------------------
-    # Apply overlap – prefer *token*-level if *tiktoken* is available, fall
+    # Apply overlap � prefer *token*-level if *tiktoken* is available, fall
     # back to character-level otherwise so behaviour degrades gracefully.
     # ------------------------------------------------------------------
 
@@ -239,99 +240,34 @@ def _smart_chunk_text(text: str, max_chars: int, overlap: int = 0) -> list[str]:
 def semantic_chunk_text(text: str, max_chars: int, overlap: int = 0, fast_mode: bool = True, use_adaptive: bool = False) -> list[str]:
     """
     Chunk text based on semantic topic boundaries.
-    
+
     Args:
         text: The text to chunk
         max_chars: Maximum character length per chunk
         overlap: Overlap between chunks (not used in semantic chunking)
         fast_mode: Use faster chunking method (default: True)
         use_adaptive: Use adaptive content-aware chunking (default: False)
-        
+
     Returns:
         List of semantically chunked text segments
     """
-    # For now, bypass semantic chunking and use paragraph-based splitting
-    return _smart_chunk_text(text, max_chars, overlap)
-    # First try semchunk (token-based semantic chunking) if available
-    # Try semchunk for fast semantic chunking (without relying on LLMs)
-    try:
-        import semchunk
-        # semchunk.splitter yields list[str]
-        overlap_frac = (overlap / max_chars) if max_chars else 0.0
-        click.echo(f"[info] Using semchunk semantic chunking (chunk_size={max_chars}, overlap={overlap_frac:.2f})")
-        
-        # Use explicit encoding name to ensure reliable tokenization with fallbacks
-        try:
-            click.echo(f"[debug] Using semchunk for semantic chunking")
-            # Try cl100k_base first
-            try:
-                click.echo(f"[debug] Attempting to use 'cl100k_base' encoding")
-                chunker = semchunk.chunkerify('cl100k_base', max_chars)
-            except (ValueError, KeyError) as e:
-                click.echo(f"[warning] cl100k_base encoding failed: {e}, trying p50k_base", err=True)
-                # Fall back to p50k_base if cl100k_base isn't available
-                chunker = semchunk.chunkerify('p50k_base', max_chars)
-                
-            # Process the text
-            chunks = chunker(text)
-            click.echo(f"[debug] Semchunk produced {len(chunks)} chunks")
-            
-            # Apply simple character-level overlap if requested
-            if overlap and chunks:
-                char_ov = int(overlap_frac * max_chars)
-                click.echo(f"[debug] Applying character overlap of {char_ov} chars")
-                overlapped: list[str] = []
-                
-                # First chunk is added as-is
-                overlapped.append(chunks[0])
-                
-                # Subsequent chunks get overlap from previous chunk
-                for idx in range(1, len(chunks)):
-                    prev = chunks[idx-1]  # Use original chunks to avoid accumulating overlaps
-                    curr = chunks[idx]
-                    
-                    # Only add overlap if previous chunk is long enough
-                    ov = prev[-char_ov:] if char_ov > 0 and len(prev) >= char_ov else ''
-                    
-                    # Add current chunk with overlap from previous
-                    overlapped.append(f"{ov}{curr}")
-                    
-                chunks = overlapped
-                click.echo(f"[debug] After applying overlap: {len(chunks)} chunks")
-            
-            # Validate chunks
-            if chunks and all(isinstance(c, str) for c in chunks):
-                # Log the first chunk's length for debugging
-                if chunks:
-                    click.echo(f"[debug] First chunk length: {len(chunks[0])}")
-                return chunks
-            else:
-                click.echo("[warning] semchunk returned invalid chunks, falling back", err=True)
-        except Exception as e:
-            click.echo(f"[warning] semchunk chunking failed with error: {e}", err=True)
-            click.echo("[debug] Falling back to alternative chunking method", err=True)
-    except ImportError:
-        # semchunk not installed
-        pass
-    except Exception as e:
-        click.echo(f"[warning] semchunk chunking failed: {e}", err=True)
     # Next try adaptive chunking if enabled
     # Check both the parameter and the global variable
     global _adaptive_chunking
     use_adaptive_chunking = use_adaptive or _adaptive_chunking
-    
+
     if use_adaptive_chunking:
         try:
             import time
             start_time = time.time()
-            
+
             # Import adaptive chunking module
             try:
                 from adaptive_chunking import adaptive_chunk_text
                 click.echo(f"[info] Using content-aware adaptive chunking")
-                
+
                 chunks = adaptive_chunk_text(text, max_chars=max_chars)
-                
+
                 # Verify we got valid chunks
                 if chunks and all(isinstance(c, str) for c in chunks):
                     elapsed_time = time.time() - start_time
@@ -347,34 +283,12 @@ def semantic_chunk_text(text: str, max_chars: int, overlap: int = 0, fast_mode: 
                 click.echo("[info] Falling back to semantic chunking", err=True)
         except Exception as e:
             click.echo(f"[warning] Unexpected error in adaptive chunking: {e}", err=True)
-    
-    # Try semantic chunking if adaptive chunking is disabled or failed
-    try:
-        import time
-        start_time = time.time()
-        
-        from advanced_rag import semantic_chunk_text as advanced_semantic_chunk
-        mode_str = "FAST" if fast_mode else "PRECISE"
-        click.echo(f"[info] Using {mode_str} semantic chunking from advanced_rag module")
-        
-        chunks = advanced_semantic_chunk(text, max_chars=max_chars, fast_mode=fast_mode)
-        
-        # Verify we got valid chunks
-        if chunks and all(isinstance(c, str) for c in chunks):
-            elapsed_time = time.time() - start_time
-            click.echo(f"[info] Semantic chunking produced {len(chunks)} chunks in {elapsed_time:.2f} seconds")
-            return chunks
-        else:
-            click.echo("[warning] Semantic chunking failed to produce valid chunks, falling back to regular chunking", err=True)
-            return _smart_chunk_text(text, max_chars, overlap)
-    except (ImportError, Exception) as e:
-        click.echo(f"[warning] Semantic chunking not available or failed: {e}", err=True)
-        click.echo("[info] Falling back to regular chunking", err=True)
-        return _smart_chunk_text(text, max_chars, overlap)
+
+
 
 
 # ---------------------------------------------------------------------------
-# Language detection helper (optional – requires the *cld3* package)
+# Language detection helper (optional � requires the *cld3* package)
 # ---------------------------------------------------------------------------
 
 
@@ -385,7 +299,7 @@ def _detect_language(text: str) -> tuple[str | None, float]:
     0.0)`` so that callers can treat the result as *unknown*.
     """
 
-    if len(text) < 20:  # too little signal for detection ⇒ treat as unknown
+    if len(text) < 20:  # too little signal for detection � treat as unknown
         return None, 0.0
 
     try:
@@ -397,47 +311,47 @@ def _detect_language(text: str) -> tuple[str | None, float]:
 
         return res.language, res.probability  # type: ignore[attr-defined]
     except ImportError:
-        # cld3 not installed – silently degrade (handled by caller)
+        # cld3 not installed � silently degrade (handled by caller)
         return None, 0.0
-    except Exception:  # pragma: no cover – unexpected detector failure
+    except Exception:  # pragma: no cover � unexpected detector failure
         return None, 0.0
 
 
 def get_openai_client(api_key: str):
     """
     Get an OpenAI client instance with improved version detection.
-    
+
     This function attempts to handle different versions of the OpenAI Python client:
     - v0.x (openai<1.0): Global module with openai.api_key and openai.Embedding.create
     - v1.x (openai>=1.0): Client instance with client.embeddings.create
-    
+
     Args:
         api_key: OpenAI API key
-    
+
     Returns:
         OpenAI client (either module or instance depending on version)
     """
     openai = _lazy_import("openai")
-    
+
     # First, check if we're using v1.x by attempting to detect the OpenAI class
     # This is the most reliable method for detecting v1.x
     if hasattr(openai, "OpenAI"):
         try:
             click.echo("[info] Detected OpenAI Python SDK v1.x")
             client = openai.OpenAI(api_key=api_key)
-            
+
             # Verify this is really a v1 client by checking for crucial methods
             if hasattr(client, "embeddings") and hasattr(client.embeddings, "create"):
                 return client
         except Exception as e:
             click.echo(f"[warning] Failed to initialize OpenAI v1 client: {e}", err=True)
-    
+
     # If we get here, either we're using v0.x or the v1 client creation failed
     # Try to set the API key on the module (v0.x style)
     try:
         click.echo("[info] Attempting to use OpenAI Python SDK v0.x")
         openai.api_key = api_key
-        
+
         # Verify this is really a v0 client by checking for crucial methods
         if hasattr(openai, "Embedding") and hasattr(openai.Embedding, "create"):
             return openai
@@ -445,7 +359,7 @@ def get_openai_client(api_key: str):
             click.echo("[warning] OpenAI client doesn't have expected v0.x methods", err=True)
     except AttributeError:
         click.echo("[warning] Unable to set api_key on OpenAI module", err=True)
-    
+
     # As a last resort, try again with v1 but with base_url and organization=None
     try:
         click.echo("[info] Attempting alternate OpenAI SDK v1.x initialization")
@@ -458,7 +372,7 @@ def get_openai_client(api_key: str):
     except Exception as e:
         click.echo(f"[error] All methods of OpenAI client initialization failed: {e}", err=True)
         click.echo(f"[info] Returning potentially incomplete OpenAI client", err=True)
-        
+
     # Return whatever we have, even if it might not work correctly
     return openai
 
@@ -472,12 +386,28 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
     """
     Use *docling* to load and chunk documents from *source*.
 
-    The function tries to stay *schema-agnostic*.  For every item docling
+    The function tries to stay *schema-agnostic*. For every item docling
     yields, we keep its raw representation as the ``payload`` (metadata), and
     attempt to locate a reasonable textual representation for embedding.
     """
+    # Early HTTP(S) URL fallback using BeautifulSoup
+    if source.lower().startswith(("http://", "https://")):
+        click.echo(f"[info] Fetching and chunking URL content: {source}")
+        try:
+            import requests
+            from bs4 import BeautifulSoup
+
+            resp = requests.get(source, timeout=120)
+            resp.raise_for_status()
+            html = resp.text
+            soup = BeautifulSoup(html, "html.parser")
+            text = soup.get_text(separator="\n")
+            chunks = _smart_chunk_text(text, chunk_size, overlap)
+            return [Document(content=chunk, metadata={"source": source, "chunk_index": idx}) for idx, chunk in enumerate(chunks)]
+        except Exception as e_url:
+            click.echo(f"[warning] URL extraction with BeautifulSoup failed: {e_url}", err=True)
     # ---------------------------------------------------------------------
-    # Helper: chunk arbitrary raw *text* into smaller passages.  We keep the
+    # Helper: chunk arbitrary raw *text* into smaller passages. We keep the
     # helper nested so it can implicitly capture the *chunk_size* / *overlap*
     # parameters from the enclosing ``load_documents`` call, but we define it
     # right at the beginning of the function so that every subsequent code
@@ -486,12 +416,12 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
 
     def _chunk_text_tokenwise(text: str, metadata: dict[str, object]) -> List[Document]:
         """Split *text* into token-aware chunks, falling back to character
-        splitting if the preferred tokenisers are unavailable.  A small helper
+        splitting if the preferred tokenisers are unavailable. A small helper
         that always returns a ``List[Document]`` with a ``chunk_index``
         injected into the copied *metadata* for downstream processing."""
 
         docs_out: list[Document] = []
-        
+
         # Ensure global variables are properly initialized
         global _use_fast_chunking, _adaptive_chunking
         if not hasattr(sys.modules[__name__], '_use_fast_chunking'):
@@ -537,7 +467,7 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
                     )
                     chunks = lc_splitter.split_text(text)
                 except Exception:
-                    # 4. Absolute last-ditch fallback – a very dumb char splitter.
+                    # 4. Absolute last-ditch fallback � a very dumb char splitter.
                     chunks = _smart_chunk_text(text, chunk_size * 4, overlap * 4)
 
         for idx, chunk in enumerate(chunks):
@@ -555,22 +485,22 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
         click.echo(f"[info] Processing URL: {source}")
         all_url_docs: list[Document] = []
         url_load_success = False
-        
+
         # Attempt LangChain UnstructuredURLLoader
         try:
             # ------------------------------------------------------------------
             # LangChain split up into *langchain* (core) and *langchain-community*.
-            # The URL loader we need was moved to the latter.  We therefore try
+            # The URL loader we need was moved to the latter. We therefore try
             # the new location first, then fall back to the pre-split paths so
             # that older installations remain compatible.
             # ------------------------------------------------------------------
             click.echo("[info] Trying LangChain URL loader...")
-            
+
             # Track which imports we actually have
             have_langchain_community = False
             have_langchain = False
             have_unstructured = False
-            
+
             # Try importing the necessary modules
             try:
                 import langchain_community
@@ -578,41 +508,41 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
                 click.echo("[info] Found langchain-community package")
             except ImportError:
                 pass
-                
+
             try:
                 import langchain
                 have_langchain = True
                 click.echo("[info] Found langchain package")
             except ImportError:
                 pass
-                
+
             try:
                 import unstructured
                 have_unstructured = True
                 click.echo("[info] Found unstructured package")
             except ImportError:
                 pass
-            
+
             if not (have_langchain or have_langchain_community):
                 click.echo("[warning] LangChain packages not found. Please install with: pip install langchain langchain-community", err=True)
                 raise ImportError("LangChain not available")
-                
+
             if not have_unstructured:
                 click.echo("[warning] Unstructured package not found. Please install with: pip install unstructured", err=True)
                 raise ImportError("Unstructured not available")
 
             # Now attempt to import the specific loader
             UnstructuredURLLoader = None
-            
+
             if have_langchain_community:
-                try:  # New ≥0.1.0 structure
+                try:  # New �0.1.0 structure
                     from langchain_community.document_loaders import UnstructuredURLLoader
                     click.echo("[info] Using langchain-community.document_loaders.UnstructuredURLLoader")
                 except ImportError:
                     pass
-                    
+
             if UnstructuredURLLoader is None and have_langchain:
-                try:  # Legacy structure (≤0.0.x)
+                try:  # Legacy structure (�0.0.x)
                     from langchain.document_loaders import UnstructuredURLLoader
                     click.echo("[info] Using langchain.document_loaders.UnstructuredURLLoader")
                 except ImportError:
@@ -621,7 +551,7 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
                         click.echo("[info] Using langchain.document_loaders.unstructured_url.UnstructuredURLLoader")
                     except ImportError:
                         UnstructuredURLLoader = None
-            
+
             if UnstructuredURLLoader is None:
                 raise ImportError("Could not find UnstructuredURLLoader in any package")
 
@@ -629,103 +559,143 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
             click.echo(f"[info] Loading URL with UnstructuredURLLoader: {source}")
             loader = UnstructuredURLLoader(urls=[source])
             raw_docs = loader.load()
-            
+
             if not raw_docs:
                 click.echo(f"[warning] UnstructuredURLLoader returned no documents for '{source}'", err=True)
             else:
                 click.echo(f"[info] UnstructuredURLLoader loaded {len(raw_docs)} documents")
-                
+
                 for raw in raw_docs:
                     text = raw.page_content
                     meta = raw.metadata or {}
                     chunked_docs = _chunk_text_tokenwise(text, meta)
                     all_url_docs.extend(chunked_docs)
-                    
+
                 if all_url_docs:
                     url_load_success = True
                     click.echo(f"[info] Successfully processed {len(all_url_docs)} chunks from URL using LangChain")
-                
+
         except ImportError as ie:
             click.echo(
                 f"[warning] LangChain or UnstructuredURLLoader not available: {ie}. "
-                "Please install with: pip install langchain-community unstructured",
+                "Please install with: pip install langchain langchain-community unstructured",
                 err=True,
             )
         except Exception as e:
             click.echo(f"[warning] LangChain URL load failed for '{source}': {e}", err=True)
-        
+        # Secondary fallback: use BeautifulSoup for URL content
+        if not url_load_success:
+            click.echo("[info] Trying secondary URL loader with BeautifulSoup...")
+            try:
+                import requests
+                from bs4 import BeautifulSoup
+
+                click.echo(f"[info] Fetching URL content: {source}")
+                resp = requests.get(source, timeout=120)
+                resp.raise_for_status()
+
+                html = resp.text
+                soup = BeautifulSoup(html, "html.parser")
+                text = soup.get_text(separator="\n")
+                chunks = _smart_chunk_text(text, chunk_size, overlap)
+                docs_bs: list[Document] = []
+                for idx, chunk in enumerate(chunks):
+                    docs_bs.append(Document(content=chunk, metadata={"source": source, "chunk_index": idx}))
+                if docs_bs:
+                    click.echo(f"[info] Successfully processed {len(docs_bs)} chunks from URL using BeautifulSoup")
+                    return docs_bs
+            except Exception as e_bs:
+                click.echo(f"[warning] BeautifulSoup URL loader failed: {e_bs}", err=True)
+
         # Fallback: Unstructured.io partition of remote HTML
         if not url_load_success:
-            click.echo("[info] Trying fallback URL loader with Unstructured.io...")
+            click.echo("[info] Trying fallback URL loader with BeautifulSoup...")
             try:
                 import requests
                 import tempfile
                 import os as _os
                 from unstructured.partition.html import partition_html
                 from unstructured.documents.elements import Table
-                
+
                 # Fetch remote HTML with a longer timeout
                 click.echo(f"[info] Fetching URL content: {source}")
                 resp = requests.get(source, timeout=120)
                 resp.raise_for_status()
-                
+
                 # Write to temp file
                 tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".html")
                 tmp_path = tmp.name
                 tmp.write(resp.content)
                 tmp.close()
-                
+
                 click.echo(f"[info] Saved URL content to temporary file: {tmp_path}")
-                
-                # Partition HTML into elements
+
+                # Partition HTML content and chunk elements
                 click.echo("[info] Partitioning HTML content...")
-                elements = partition_html(tmp_path)
-                
-                if not elements:
-                    click.echo(f"[warning] No elements extracted from '{source}'", err=True)
-                else:
+                try:
+                    elements = partition_html(tmp_path)
+                except Exception as e_html:
+                    click.echo(f"[warning] Partitioning HTML failed: {e_html}", err=True)
+                    elements = []
+
+                docs_url: list[Document] = []
+                if elements:
                     click.echo(f"[info] Extracted {len(elements)} elements from HTML")
-                    
-                    docs_url: list[Document] = []
                     for elem in elements:
                         if isinstance(elem, Table):
                             try:
                                 md = elem.to_markdown()
                             except Exception:
                                 md = elem.get_text()
-                            # Split table into row-level chunks for better embeddings
                             lines = md.splitlines()
                             if len(lines) > 2:
-                                header = lines[0]
-                                sep = lines[1]
-                                for row in lines[2:]:
-                                    row = row.strip()
+                                header, sep = lines[0], lines[1]
+                                for row_idx, row_content in enumerate(lines[2:]):
+                                    row = row_content.strip()
                                     if not row:
                                         continue
                                     row_md = f"{header}\n{sep}\n{row}"
-                                    docs_url.append(Document(content=row_md, metadata={"source": source, "is_table": True}))
+                                    docs_url.append(Document(content=row_md, metadata={"source": source, "is_table": True, "table_row_index": row_idx}))
                             else:
                                 docs_url.append(Document(content=md, metadata={"source": source, "is_table": True}))
-                        elif hasattr(elem, 'text') and isinstance(elem.text, str):
+                        elif hasattr(elem, "text") and isinstance(elem.text, str):
                             txt = elem.text
                             docs_url.extend(_chunk_text_tokenwise(txt, {"source": source}))
-                    
-                    if docs_url:
-                        all_url_docs.extend(docs_url)
-                        url_load_success = True
-                        click.echo(f"[info] Successfully processed {len(docs_url)} chunks from URL using Unstructured.io")
-                
+                else:
+                    click.echo(f"[warning] No elements extracted from '{source}'", err=True)
+
+                # Basic fallback with BeautifulSoup if no docs_url
+                if not docs_url:
+                    click.echo("[info] Trying basic HTML extraction with BeautifulSoup...")
+                    try:
+                        from bs4 import BeautifulSoup
+                        with open(tmp_path, "r", encoding="utf-8", errors="ignore") as fh:
+                            html_content = fh.read()
+                        soup = BeautifulSoup(html_content, "html.parser")
+                        text = soup.get_text(separator="\n")
+                        bs_chunks = _smart_chunk_text(text, chunk_size, overlap)
+                        for idx, chunk in enumerate(bs_chunks):
+                            docs_url.append(Document(content=chunk, metadata={"source": source, "chunk_index": idx}))
+                        click.echo(f"[info] BeautifulSoup fallback loaded {len(docs_url)} chunks")
+                    except Exception as e_bs:
+                        click.echo(f"[warning] BeautifulSoup fallback failed: {e_bs}", err=True)
+
+                if docs_url:
+                    all_url_docs.extend(docs_url)
+                    url_load_success = True
+                    click.echo(f"[info] Successfully processed {len(docs_url)} chunks from URL using Unstructured.io")
+
                 # Cleanup
                 try:
                     _os.remove(tmp_path)
                 except Exception:
                     pass
-                    
+
             except Exception as e2:
                 click.echo(f"[warning] Unstructured URL fallback failed: {e2}", err=True)
                 click.echo("[info] If you are trying to load a URL, please ensure you have required packages:", err=True)
                 click.echo("    pip install langchain langchain-community unstructured requests bs4", err=True)
-        
+
         # Return any documents we found
         if all_url_docs:
             click.echo(f"[info] Returning {len(all_url_docs)} total chunks from URL")
@@ -733,7 +703,7 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
         else:
             click.echo(f"[warning] Could not extract any content from URL: {source}", err=True)
             # Don't return an empty list - let the code continue to try other methods
-        
+
         # Fallback to generic extractor
 
         # If source is a local PDF, use Unstructured.io for layout-aware parsing with fallback
@@ -775,12 +745,12 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
                         if len(lines) > 2:
                             header = lines[0]
                             sep = lines[1]
-                            for row in lines[2:]:
-                                row = row.strip()
+                            for row_idx, row_content in enumerate(lines[2:]):
+                                row = row_content.strip()
                                 if not row:
                                     continue
                                 row_md = f"{header}\n{sep}\n{row}"
-                                docs_pdf.append(Document(content=row_md, metadata={"source": source, "is_table": True}))
+                                docs_pdf.append(Document(content=row_md, metadata={"source": source, "is_table": True, "table_row_index": row_idx}))
                         else:
                             docs_pdf.append(Document(content=md, metadata={"source": source, "is_table": True}))
                     elif hasattr(elem, 'text') and isinstance(elem.text, str):
@@ -823,17 +793,17 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
                         if len(lines) > 2:
                             header = lines[0]
                             sep = lines[1]
-                            for row in lines[2:]:
-                                row = row.strip()
+                            for row_idx, row_content in enumerate(lines[2:]):
+                                row = row_content.strip()
                                 if not row:
                                     continue
                                 row_md = f"{header}\n{sep}\n{row}"
-                                docs_html.append(Document(content=row_md, metadata={"source": source, "is_table": True}))
-                        else:
-                            docs_html.append(Document(content=md, metadata={"source": source, "is_table": True}))
-                    elif hasattr(elem, 'text') and isinstance(elem.text, str):
-                        txt = elem.text
-                        docs_html.extend(_chunk_text_tokenwise(txt, {"source": source}))
+                                docs_html.append(Document(content=row_md, metadata={"source": source, "is_table": True, "table_row_index": row_idx}))
+                            else:
+                                docs_html.append(Document(content=md, metadata={"source": source, "is_table": True}))
+                        elif hasattr(elem, 'text') and isinstance(elem.text, str):
+                            txt = elem.text
+                            docs_html.extend(_chunk_text_tokenwise(txt, {"source": source}))
                 return docs_html
             except Exception as e:
                 click.echo(f"[warning] Unstructured HTML parse failed for '{source}': {e}", err=True)
@@ -851,7 +821,7 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
 
     # Try docling extract to get raw text, then chunk by tokens (fallback to char-chunks)
     # (definition moved to top of function so that it can be referenced from
-    # earlier code paths – see above.)
+    # earlier code paths � see above.)
 
     # Check if the source is a valid file or URL
     # Skip docling processing if source appears to be a flag passed incorrectly
@@ -887,15 +857,14 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
     try:
         docling = _lazy_import("docling")
     except SystemExit:
-        # docling not installed – fall back to naïve whitespace chunking of the
-        # entire file.  This avoids a hard dependency on docling when the user
-        # simply wants to ingest a plain‑text transcript.
+        # docling not installed – fall back to naive whitespace chunking of the entire file
         try:
             with open(source, "r", encoding="utf-8", errors="replace") as fh:
                 full_text = fh.read()
         except Exception as e:
-            click.echo(f"[fatal] Could not read source '{source}': {e}", err=True)
-            sys.exit(1)
+            click.echo(f"[warning] Could not read source '{source}': {e}", err=True)
+            # Return empty list so caller can handle missing documents gracefully
+            return []
 
         # Chunk with smarter boundaries and overlap
         text_chunks = _smart_chunk_text(full_text, chunk_size, overlap)
@@ -933,8 +902,9 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
                 with open(source, "r", encoding="utf-8", errors="replace") as fh:
                     full_text = fh.read()
             except Exception as e2:
-                click.echo(f"[fatal] Could not read source '{source}': {e2}", err=True)
-                sys.exit(1)
+                click.echo(f"[warning] Could not read source '{source}': {e2}", err=True)
+                # Return empty list so caller can handle missing documents gracefully
+                return []
             # Chunk with smarter boundaries and overlap
             chunks = _smart_chunk_text(full_text, chunk_size, overlap)
             return [Document(content=chunk, metadata={"source": source, "chunk_index": idx})
@@ -1011,7 +981,7 @@ def embed_and_upsert(
 
     # Determine which OpenAI binding style is active with more robust detection
     is_openai_v1 = False
-    
+
     # First check for openai v1 API style
     if hasattr(openai_client, "embeddings"):
         # Verify it's actually the v1 API by checking for the 'create' method
@@ -1020,7 +990,7 @@ def embed_and_upsert(
     # Additional check for v1 API style with different attribute patterns
     elif hasattr(openai_client, "Embeddings") and hasattr(openai_client.Embeddings, "create"):
         is_openai_v1 = True
-    
+
     click.echo(f"[info] Using OpenAI {'v1' if is_openai_v1 else 'v0'} API for embeddings")
     # Local helper to call the OpenAI embeddings API
     import time
@@ -1116,7 +1086,7 @@ def embed_and_upsert(
 
 
 # ---------------------------------------------------------------------------
-# Command‑line interface
+# Command-line interface
 # ---------------------------------------------------------------------------
 
 
@@ -1140,13 +1110,13 @@ def embed_and_upsert(
 @click.option("--chunk-overlap", type=int, default=50, show_default=True, help="Overlap (tokens) between chunks.")
 @click.option("--crawl-depth", type=int, default=0, show_default=True, help="When SOURCE is a URL, crawl hyperlinks up to this depth (0=no crawl).")
 @click.option("--parallel", type=int, default=15, show_default=True, help="Number of parallel workers for Qdrant upsert.")
-@click.option("--fast-chunking/--precise-chunking", default=True, show_default=True, 
+@click.option("--fast-chunking/--precise-chunking", default=True, show_default=True,
               help="Use fast heuristic-based semantic chunking (faster) or transformer-based semantic chunking (more precise but much slower).")
 @click.option("--generate-summaries/--no-generate-summaries", default=True, show_default=True,
                help="Generate and index brief summaries of each chunk for multi-granularity retrieval.")
 @click.option("--quality-checks/--no-quality-checks", default=True, show_default=True,
                help="Perform post-ingest quality checks on chunk sizes and entity consistency.")
-@click.option("--rich-metadata/--no-rich-metadata", default=True, show_default=True, 
+@click.option("--rich-metadata/--no-rich-metadata", default=True, show_default=True,
                help="Extract rich metadata from document content for better retrieval context.",
               is_flag=True)
 @click.option("--hierarchical-embeddings/--no-hierarchical-embeddings", default=True, show_default=True,
@@ -1164,7 +1134,7 @@ def embed_and_upsert(
 @click.option("--deduplication/--no-deduplication", default=True, show_default=True,
               help="Enable duplicate detection and removal during ingestion.",
               is_flag=True)
-@click.option("--similarity-threshold", type=float, default=0.85, show_default=True, 
+@click.option("--similarity-threshold", type=float, default=0.85, show_default=True,
               help="Similarity threshold for near-duplicate detection (0-1).")
 @click.option("--merge-duplicates/--no-merge-duplicates", default=True, show_default=True,
               help="Merge similar documents instead of removing them.")
@@ -1257,10 +1227,10 @@ def cli(
             click.echo(f"[info] Environment variables loaded from {env_file}")
         except SystemExit:
             raise
-        except Exception:  # pragma: no cover – edge‑case, continue silently
+        except Exception:  # pragma: no cover � edge-case, continue silently
             pass
 
-    # Accept lower‑case variants (e.g. `openai_api_key=`) for convenience
+    # Accept lower-case variants (e.g. `openai_api_key=`) for convenience
     if "OPENAI_API_KEY" not in os.environ and "openai_api_key" in os.environ:
         os.environ["OPENAI_API_KEY"] = os.environ["openai_api_key"]
     if "QDRANT_API_KEY" not in os.environ and "qdrant_api_key" in os.environ:
@@ -1272,7 +1242,7 @@ def cli(
 
     global _allowed_languages, _lang_prob_threshold
     if languages.lower() == "all":
-        _allowed_languages = set()  # empty set → filter disabled
+        _allowed_languages = set()  # empty set � filter disabled
     else:
         _allowed_languages = {lang.strip().lower() for lang in languages.split(',') if lang.strip()}
     _lang_prob_threshold = max(0.0, min(1.0, lang_threshold))
@@ -1287,7 +1257,7 @@ def cli(
 
     if openai_api_key is None:
         click.echo(
-            "[fatal] OPENAI_API_KEY is not set. Provide --openai-api-key, set it in the"\
+            "[fatal] OPENAI_API_KEY is not set. Provide �openai-api-key, set it in the"
             " environment, or put it in the .env file.",
             err=True,
         )
@@ -1313,7 +1283,7 @@ def cli(
     documents = load_documents(source, chunk_size, chunk_overlap, crawl_depth)
 
     # ------------------------------------------------------------------
-    # Language filtering (optional, controlled by --languages CLI flag)
+    # Language filtering (optional, controlled by �languages CLI flag)
     # ------------------------------------------------------------------
 
     if _allowed_languages and _lang_prob_threshold > 0.0:
@@ -1322,7 +1292,7 @@ def cli(
         for doc in documents:
             lang, prob = _detect_language(doc.content[:4000])  # only look at first part for speed
             if lang is None:
-                # Unable to detect – keep document (conservative)            
+                # Unable to detect � keep document (conservative)
                 filtered_docs.append(doc)
                 continue
 
@@ -1336,17 +1306,17 @@ def cli(
     click.echo(f"[info] Loaded {len(documents)} document(s)")
 
     if not documents:
-        click.echo("[warning] No documents found – nothing to do.")
+        click.echo("[warning] No documents found � nothing to do.")
         return
 
     # -----------------------------------------------------------------
     # Enhanced metadata, quality checks, and optional summarization
     # -----------------------------------------------------------------
-    
+
     # Apply entity extraction and normalization if enabled
     if entity_extraction:
         click.echo("[info] Applying entity extraction and normalization...")
-        
+
         # Attempt to import entity_extraction module
         try:
             # Try to import using relative path first
@@ -1366,49 +1336,49 @@ def cli(
                 # Try importing again
                 from entity_extraction import extract_and_normalize_entities, enhance_text_with_entities, get_entity_metadata
                 click.echo("[info] Using entity_extraction module from script directory")
-                
+
             # Process documents with entity extraction
             processed_documents = []
             for doc in tqdm(documents, desc="Extracting and normalizing entities"):
                 # Extract entities from document content
                 entity_data = extract_and_normalize_entities(doc.content)
-                
+
                 # Create metadata with entity information
                 entity_metadata = get_entity_metadata(doc.content)
-                
+
                 # Update document metadata with entity information
                 new_metadata = doc.metadata.copy()
                 new_metadata.update(entity_metadata)
-                
+
                 # Optionally enhance text with entity annotations for better embeddings
                 if enhance_text_with_entities:
                     enhanced_content = enhance_text_with_entities(doc.content, entity_data)
                     click.echo(f"[info] Enhanced document text with entity annotations")
                 else:
                     enhanced_content = doc.content
-                
+
                 # Create new document with entity-enhanced content and metadata
                 processed_doc = Document(
                     content=enhanced_content,
                     metadata=new_metadata
                 )
                 processed_documents.append(processed_doc)
-            
+
             # Replace original documents with processed versions
             documents = processed_documents
             click.echo(f"[info] Entity extraction completed for {len(documents)} documents")
-            
+
         except ImportError as e:
             click.echo(f"[warning] Entity extraction failed: {e}", err=True)
-            click.echo("[info] Install entity_extraction.py module or disable --entity-extraction flag", err=True)
+            click.echo("[info] Install entity_extraction.py module or disable �entity-extraction flag", err=True)
         except Exception as e:
             click.echo(f"[warning] Entity extraction encountered an error: {e}", err=True)
             click.echo("[info] Continuing without entity extraction", err=True)
-    
+
     # Apply rich metadata extraction if enabled
     if rich_metadata:
         click.echo("[info] Applying rich metadata extraction...")
-        
+
         # Attempt to import rich_metadata module
         try:
             # Try to import using relative path first
@@ -1420,7 +1390,6 @@ def cli(
                 # Try to import using absolute path second
                 import os
                 import sys
-                # Get the script directory
                 script_dir = os.path.dirname(os.path.abspath(__file__))
                 # Add the script directory to sys.path if not already there
                 if script_dir not in sys.path:
@@ -1428,7 +1397,7 @@ def cli(
                 # Try importing again
                 from rich_metadata import enrich_document_metadata
                 click.echo("[info] Using rich_metadata module from script directory")
-                
+
             # Process documents with rich metadata extraction
             enriched_documents = []
             for doc in tqdm(documents, desc="Extracting rich metadata"):
@@ -1445,22 +1414,22 @@ def cli(
                     metadata=enriched_doc_dict["metadata"]
                 )
                 enriched_documents.append(enriched_doc)
-            
+
             # Replace original documents with enriched versions
             documents = enriched_documents
             click.echo(f"[info] Rich metadata extraction completed for {len(documents)} documents")
-            
+
         except ImportError as e:
             click.echo(f"[warning] Rich metadata extraction failed: {e}", err=True)
-            click.echo("[info] Install rich_metadata.py module or disable --rich-metadata flag", err=True)
+            click.echo("[info] Install rich_metadata.py module or disable �rich-metadata flag", err=True)
         except Exception as e:
             click.echo(f"[warning] Rich metadata extraction encountered an error: {e}", err=True)
             click.echo("[info] Continuing with basic metadata", err=True)
-    
+
     # Apply deduplication if enabled
     if deduplication:
         click.echo("[info] Applying document deduplication...")
-        
+
         # Attempt to import deduplication module
         try:
             # Try to import using relative path first
@@ -1472,18 +1441,15 @@ def cli(
                 # Try to import using absolute path second
                 import os
                 import sys
-                # Get the script directory
                 script_dir = os.path.dirname(os.path.abspath(__file__))
-                # Add the script directory to sys.path if not already there
                 if script_dir not in sys.path:
                     sys.path.insert(0, script_dir)
-                # Try importing again
                 from deduplication import deduplicate_documents
                 click.echo("[info] Using deduplication module from script directory")
-                
+
             # Convert Document objects to dictionaries for deduplication
             doc_dicts = [{"content": doc.content, "metadata": doc.metadata} for doc in documents]
-            
+
             # Apply deduplication
             click.echo(f"[info] Deduplicating {len(doc_dicts)} documents (threshold={similarity_threshold}, merge={merge_duplicates})")
             deduplicated_docs, stats = deduplicate_documents(
@@ -1491,27 +1457,27 @@ def cli(
                 similarity_threshold=similarity_threshold,
                 merge_similar=merge_duplicates
             )
-            
+
             # Convert back to Document objects
             deduplicated = [Document(content=doc["content"], metadata=doc["metadata"]) for doc in deduplicated_docs]
-            
+
             # Print deduplication stats
-            click.echo(f"[info] Deduplication complete: {stats.total_documents} → {stats.unique_documents} documents")
+            click.echo(f"[info] Deduplication complete: {stats.total_documents} � {stats.unique_documents} documents")
             if stats.exact_duplicates > 0 or stats.near_duplicates > 0:
                 click.echo(f"[info] Removed {stats.exact_duplicates} exact duplicates and {stats.near_duplicates} near-duplicates")
                 click.echo(f"[info] Found {stats.duplicate_sets} duplicate clusters, largest had {stats.largest_cluster_size} documents")
                 click.echo(f"[info] Saved approximately {stats.characters_saved/1024:.1f} KB by deduplication")
-            
+
             # Replace original documents with deduplicated ones
             documents = deduplicated
-            
+
         except ImportError as e:
             click.echo(f"[warning] Deduplication failed: {e}", err=True)
-            click.echo("[info] Install deduplication.py module or disable --deduplication flag", err=True)
+            click.echo("[info] Install deduplication.py module or disable �deduplication flag", err=True)
         except Exception as e:
             click.echo(f"[warning] Deduplication encountered an error: {e}", err=True)
             click.echo("[info] Continuing without deduplication", err=True)
-    
+
     # Annotate each chunk with enhanced metadata
     for idx, doc in enumerate(documents):
         # Source file or URL
@@ -1544,13 +1510,13 @@ def cli(
         max_tokens = chunk_size * 2
         filtered_documents = []
         small_chunks_count = 0
-        
+
         for doc in documents:
             token_count = len(doc.content.split())
             if token_count < min_tokens:
                 click.echo(
                     f"[warning] Chunk index={doc.metadata.get('chunk_index')} "
-                    f"token_count={token_count} too small (<{min_tokens}) - will be filtered out",
+                    f"token_count={token_count} too small (<{min_tokens}) � will be filtered out",
                     err=True,
                 )
                 small_chunks_count += 1
@@ -1562,7 +1528,7 @@ def cli(
                     err=True,
                 )
             filtered_documents.append(doc)
-        
+
         if small_chunks_count > 0:
             click.echo(f"[info] Filtered out {small_chunks_count} small chunks with fewer than {min_tokens} tokens")
             documents = filtered_documents
@@ -1572,22 +1538,22 @@ def cli(
     if generate_summaries:
         click.echo(f"[info] Generating summaries for {len(documents)} chunks...")
         llm = get_openai_client(openai_api_key)
-        
+
         # Process in smaller batches with timeouts and more detailed progress
         batch_size = 10
         total_docs = len(documents)
         successful_summaries = 0
         failed_summaries = 0
-        
+
         for i in range(0, total_docs, batch_size):
             batch = documents[i:i+batch_size]
             click.echo(f"[info] Processing summary batch {i//batch_size + 1}/{(total_docs + batch_size - 1)//batch_size} ({i+1}-{min(i+batch_size, total_docs)} of {total_docs})")
-            
+
             for doc in batch:
                 # Skip very short chunks
                 if len(doc.content) < 200:
                     continue
-                
+
                 # Create a unique indicator for this doc
                 doc_id = doc.metadata.get('chunk_index', 'unknown')
                 try:
@@ -1596,12 +1562,12 @@ def cli(
                         "role": "user",
                         "content": f"Provide a concise (1-2 sentences) summary of the following text:\n\n{doc.content}",
                     }
-                    
+
                     # Use a timeout to prevent hanging
                     import threading
                     summary = None
                     error = None
-                    
+
                     def call_api():
                         nonlocal summary, error
                         try:
@@ -1617,23 +1583,23 @@ def cli(
                                 summary = resp.choices[0].message.content.strip()  # type: ignore
                         except Exception as e:
                             error = str(e)
-                    
+
                     # Run API call with timeout
                     thread = threading.Thread(target=call_api)
                     thread.daemon = True
                     thread.start()
                     thread.join(30)  # Wait max 30 seconds
-                    
+
                     if thread.is_alive():
                         click.echo(f"[warning] Summary generation timed out for chunk {doc_id}", err=True)
                         failed_summaries += 1
                         continue
-                    
+
                     if error:
                         click.echo(f"[warning] Summary generation failed for chunk {doc_id}: {error}", err=True)
                         failed_summaries += 1
                         continue
-                    
+
                     if summary:
                         meta = doc.metadata.copy()
                         meta["is_summary"] = True
@@ -1642,14 +1608,14 @@ def cli(
                     else:
                         click.echo(f"[warning] Empty summary generated for chunk {doc_id}", err=True)
                         failed_summaries += 1
-                        
+
                 except Exception as e:
                     click.echo(f"[warning] Unexpected error in summary generation for chunk {doc_id}: {e}", err=True)
                     failed_summaries += 1
-        
+
         # Report results
         click.echo(f"[info] Summary generation complete: {successful_summaries} successful, {failed_summaries} failed")
-                
+
         # Make sure we continue with processing even if no summaries were generated
         if summary_docs:
             click.echo(f"[info] Adding {len(summary_docs)} summaries to the documents for indexing")
@@ -1670,7 +1636,7 @@ def cli(
     # ---------------------------------------------------------------------
 
     openai_client = get_openai_client(openai_api_key)
-    
+
     if hierarchical_embeddings:
         try:
             # Import hierarchical embeddings module
@@ -1686,51 +1652,51 @@ def cli(
                 if script_dir not in sys.path:
                     sys.path.insert(0, script_dir)
                 import hierarchical_embeddings
-            
+
             # Configure models
             hierarchical_embeddings.DOCUMENT_LEVEL_MODEL = doc_embedding_model
             hierarchical_embeddings.SECTION_LEVEL_MODEL = section_embedding_model
             hierarchical_embeddings.CHUNK_LEVEL_MODEL = chunk_embedding_model
-            
+
             click.echo(f"[info] Using models: doc={doc_embedding_model}, section={section_embedding_model}, chunk={chunk_embedding_model}")
-            
+
             # Convert our documents to the format expected by hierarchical_embeddings
             doc_list = [{"content": doc.content, "metadata": doc.metadata} for doc in documents]
-            
+
             click.echo(f"[info] Creating hierarchical embeddings for {len(doc_list)} documents")
-            
+
             # Create hierarchical embeddings
             hierarchical_data = hierarchical_embeddings.create_hierarchical_embeddings(
-                doc_list, 
+                doc_list,
                 openai_client,
                 batch_size=batch_size
             )
-            
+
             # Prepare points for Qdrant
             points = hierarchical_embeddings.prepare_hierarchical_points_for_qdrant(hierarchical_data)
-            
+
             # Statistics
             doc_count = len(hierarchical_data["documents"])
             section_count = len(hierarchical_data["sections"])
             chunk_count = len(hierarchical_data["chunks"])
-            
+
             click.echo(f"[info] Created hierarchical structure with {doc_count} documents, {section_count} sections, and {chunk_count} chunks")
-            
+
             # Upsert points into Qdrant
             from qdrant_client.http import models as rest
-            
+
             # Batch points for upsert
             for i in range(0, len(points), batch_size):
                 batch_points = points[i:i+batch_size]
                 # Convert dict to PointStruct
                 qdrant_points = [
                     rest.PointStruct(
-                        id=p["id"], 
-                        vector=p["vector"], 
+                        id=p["id"],
+                        vector=p["vector"],
                         payload=p["payload"]
                     ) for p in batch_points
                 ]
-                
+
                 # Check if parallel parameter is supported
                 import inspect
                 client_upsert_params = inspect.signature(client.upsert).parameters
@@ -1739,32 +1705,32 @@ def cli(
                 else:
                     # Parallel kwarg not supported by this client version
                     client.upsert(collection_name=collection, points=qdrant_points)
-                
+
                 click.echo(f"[info] Upserted batch {i//batch_size + 1}/{(len(points) + batch_size - 1)//batch_size}")
-                
+
             # Save hierarchical structure to a separate file
             structure_file = f"{collection}_hierarchical_structure.json"
             with open(structure_file, "w") as f:
                 # Remove the large embeddings to keep file size reasonable
                 save_data = {
                     "documents": [
-                        {k: v for k, v in doc.items() if k != "embedding"} 
+                        {k: v for k, v in doc.items() if k != "embedding"}
                         for doc in hierarchical_data["documents"]
                     ],
                     "sections": [
-                        {k: v for k, v in section.items() if k != "embedding"} 
+                        {k: v for k, v in section.items() if k != "embedding"}
                         for section in hierarchical_data["sections"]
                     ],
                     "chunks": [
-                        {k: v for k, v in chunk.items() if k != "embedding"} 
+                        {k: v for k, v in chunk.items() if k != "embedding"}
                         for chunk in hierarchical_data["chunks"]
                     ],
                     "statistics": hierarchical_data["statistics"]
                 }
                 json.dump(save_data, f)
-                
+
             click.echo(f"[info] Saved hierarchical structure to {structure_file}")
-            
+
         except Exception as e:
             click.echo(f"[error] Hierarchical embeddings failed: {e}", err=True)
             click.echo("[info] Falling back to regular embeddings", err=True)
@@ -1791,7 +1757,7 @@ def cli(
         )
 
     click.secho(f"\n[success] Ingestion completed. Collection '{collection}' now holds the embeddings.", fg="green")
-    
+
     # ---------------------------------------------------------------------
     # Run post-ingestion validation if enabled
     # ---------------------------------------------------------------------
@@ -1812,47 +1778,47 @@ def cli(
                 from ingest_validation import validate_ingestion as validate_fn
                 from ingest_validation import run_test_queries as run_queries_fn
                 click.echo("[info] Using ingest_validation module from script directory")
-                
+
             # Run validation
             if validate_ingestion:
                 click.echo("\n[info] Running post-ingestion validation...")
                 validation_summary = validate_fn(client, collection)
-                
+
                 # Print validation results
                 click.secho(f"\nValidation Results:", fg="cyan")
-                click.secho(f"Status: {validation_summary.overall_status}", 
+                click.secho(f"Status: {validation_summary.overall_status}",
                            fg="green" if validation_summary.overall_status == "PASSED" else "yellow" if validation_summary.overall_status == "PARTIAL" else "red")
                 click.echo(f"Tests Passed: {validation_summary.passed_tests}/{validation_summary.total_tests}")
                 click.echo(f"Overall Score: {validation_summary.average_score:.2f}/1.00")
-                
+
                 # Print individual test results
                 click.echo("\nTest Details:")
                 for result in validation_summary.results:
-                    status = "✅ PASS" if result.passed else "❌ FAIL"
+                    status = "? PASS" if result.passed else "? FAIL"
                     click.echo(f"{status} [{result.test_name}] Score: {result.score:.2f} - {result.message}")
 
                 # Optionally abort with non-zero exit code if validation failed
                 if fail_on_validation_error and validation_summary.overall_status != "PASSED":
-                    click.echo("[error] Validation did not pass and --fail-on-validation-error is set. Exiting.", err=True)
+                    click.echo("[error] Validation did not pass and �fail-on-validation-error is set. Exiting.", err=True)
                     raise SystemExit(2)
-                
+
                 # Print critical issues
                 if validation_summary.critical_issues:
                     click.secho("\nCritical Issues:", fg="red")
                     for issue in validation_summary.critical_issues:
                         click.echo(f"- {issue}")
-            
+
             # Run test queries
             if run_test_queries:
                 click.echo("\n[info] Running test queries to verify retrieval...")
                 query_result = run_queries_fn(client, collection, openai_client)
-                
+
                 # Print query test results
-                status = "✅ PASS" if query_result.passed else "❌ FAIL"
+                status = "? PASS" if query_result.passed else "? FAIL"
                 click.secho(f"\nQuery Test: {status}", fg="green" if query_result.passed else "red")
                 click.echo(f"Score: {query_result.score:.2f}")
                 click.echo(f"Message: {query_result.message}")
-                
+
                 # Print detailed metrics
                 details = query_result.details
                 click.echo(f"Queries Run: {details.get('total_queries', 0)}")
@@ -1860,7 +1826,7 @@ def cli(
                 if details.get('avg_position') is not None:
                     click.echo(f"Average Position: {details.get('avg_position', 0):.1f}")
                 click.echo(f"Average Latency: {details.get('avg_latency', 0):.3f} seconds")
-                
+
         except ImportError as e:
             click.echo(f"[warning] Validation failed to import: {e}", err=True)
             click.echo("[info] Install ingest_validation.py module to enable validation", err=True)
