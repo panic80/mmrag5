@@ -24,3 +24,4 @@ pytest>=6.0
 flask
 python-dateutil>=2.8
 sentence-transformers
+tenacity>=8.0.0  # For retry mechanisms with exponential backoff
