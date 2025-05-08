@@ -1,0 +1,32 @@
+# Core dependencies from phase 1-2
+click>=8.0
+qdrant-client>=1.4
+openai>=0.28
+tqdm>=4.0
+beautifulsoup4>=4.9
+requests>=2.0
+python-dotenv>=0.19
+docling-core>=2.27
+pdfminer.six>=20201018
+rank-bm25>=0.2.2
+unstructured>=0.6
+langchain>=0.0.200
+langchain-community>=0.0.30
+pytest>=6.0
+flask
+python-dateutil>=2.8
+sentence-transformers
+tenacity>=8.0.0
+numpy>=1.20.0
+
+# Phase 3 additional dependencies
+fastapi>=0.95.0  # For microservices API
+uvicorn>=0.21.0  # ASGI server for FastAPI
+pydantic>=1.10.7  # Data validation for API
+redis>=4.5.4  # For distributed caching
+scikit-learn>=1.2.2  # For ML-based strategy selection
+transformers>=4.28.1  # For token-level embeddings (ColBERT)
+torch>=2.0.0  # For PyTorch operations
+faiss-cpu>=1.7.4  # For efficient vector search
+prometheus-client>=0.16.0  # For metrics collection
+httpx>=0.24.0  # For async HTTP requests between services

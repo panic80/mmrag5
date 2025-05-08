@@ -1,0 +1,233 @@
+version: '3.8'
+
+services:
+  # Cache Service
+  cache:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m uvicorn microservices.cache_service:create_fastapi_app --host 0.0.0.0 --port 8000 --factory
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - USE_MEMORY_CACHE=${USE_MEMORY_CACHE:-false}
+      - DEFAULT_TTL=${DEFAULT_TTL:-3600}
+    volumes:
+      - ./:/app
+    depends_on:
+      - redis
+    networks:
+      - rag_network
+
+  # Vector Search Service
+  vector_search:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m uvicorn microservices.vector_search_service:create_fastapi_app --host 0.0.0.0 --port 8001 --factory
+    ports:
+      - "8001:8001"
+    environment:
+      - DEFAULT_EMBEDDING_MODEL=sentence-transformers/multi-qa-mpnet-base-dot-v1
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - CACHE_SERVICE_URL=http://cache:8000
+      - USE_FAISS=${USE_FAISS:-false}
+    volumes:
+      - ./:/app
+    depends_on:
+      - cache
+      - qdrant
+    networks:
+      - rag_network
+
+  # BM25 Service
+  bm25:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m uvicorn microservices.bm25_service:create_fastapi_app --host 0.0.0.0 --port 8002 --factory
+    ports:
+      - "8002:8002"
+    environment:
+      - BM25_INDEX_DIR=bm25_indices
+      - CACHE_SERVICE_URL=http://cache:8000
+    volumes:
+      - ./:/app
+      - bm25_data:/app/bm25_indices
+    depends_on:
+      - cache
+    networks:
+      - rag_network
+
+  # Fusion Service
+  fusion:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m uvicorn microservices.fusion_service:create_fastapi_app --host 0.0.0.0 --port 8003 --factory
+    ports:
+      - "8003:8003"
+    environment:
+      - CACHE_SERVICE_URL=http://cache:8000
+      - VECTOR_SERVICE_URL=http://vector_search:8001
+    volumes:
+      - ./:/app
+    depends_on:
+      - cache
+      - vector_search
+    networks:
+      - rag_network
+
+  # ColBERT Service
+  colbert:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m uvicorn microservices.colbert_service:create_fastapi_app --host 0.0.0.0 --port 8005 --factory
+    ports:
+      - "8005:8005"
+    environment:
+      - COLBERT_MODEL_NAME=bert-base-uncased
+      - MAX_QUERY_TOKENS=32
+      - MAX_DOC_TOKENS=180
+      - SIMILARITY_METRIC=cosine
+      - USE_GPU=${USE_GPU:-false}
+      - CACHE_SERVICE_URL=http://cache:8000
+    volumes:
+      - ./:/app
+      - colbert_data:/app/colbert_data
+    depends_on:
+      - cache
+    networks:
+      - rag_network
+
+  # SPLADE Service
+  splade:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m uvicorn microservices.splade_service:create_fastapi_app --host 0.0.0.0 --port 8006 --factory
+    ports:
+      - "8006:8006"
+    environment:
+      - SPLADE_MODEL_NAME=naver/splade-cocondenser-ensembledistil
+      - MAX_SEQ_LENGTH=256
+      - USE_GPU=${USE_GPU:-false}
+      - LAMBDA_D=0.0001
+      - SPLADE_INDEX_DIR=splade_indices
+      - CACHE_SERVICE_URL=http://cache:8000
+    volumes:
+      - ./:/app
+      - splade_data:/app/splade_indices
+    depends_on:
+      - cache
+    networks:
+      - rag_network
+
+  # Dynamic Parameter Tuner
+  parameter_tuner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m uvicorn microservices.dynamic_parameter_tuner:create_fastapi_app --host 0.0.0.0 --port 8007 --factory
+    ports:
+      - "8007:8007"
+    environment:
+      - PARAMETER_MODEL_DIR=parameter_models
+      - PERFORMANCE_HISTORY_FILE=performance_history.json
+      - CACHE_SERVICE_URL=http://cache:8000
+      - MIN_FEEDBACK_SAMPLES=10
+      - UPDATE_INTERVAL_HOURS=24
+    volumes:
+      - ./:/app
+      - parameter_data:/app/parameter_models
+    depends_on:
+      - cache
+    networks:
+      - rag_network
+
+  # Strategy Selector
+  strategy_selector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m uvicorn microservices.strategy_selector:create_fastapi_app --host 0.0.0.0 --port 8008 --factory
+    ports:
+      - "8008:8008"
+    environment:
+      - STRATEGY_MODEL_DIR=strategy_models
+      - STRATEGY_HISTORY_FILE=strategy_history.json
+      - CACHE_SERVICE_URL=http://cache:8000
+      - PARAMETER_TUNER_URL=http://parameter_tuner:8007
+      - MIN_FEEDBACK_SAMPLES=30
+      - UPDATE_INTERVAL_HOURS=24
+    volumes:
+      - ./:/app
+      - strategy_data:/app/strategy_models
+    depends_on:
+      - cache
+      - parameter_tuner
+    networks:
+      - rag_network
+
+  # Query Service - Main Orchestrator
+  query:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m uvicorn microservices.query_service:create_fastapi_app --host 0.0.0.0 --port 8004 --factory
+    ports:
+      - "8004:8004"
+    environment:
+      - VECTOR_SERVICE_URL=http://vector_search:8001
+      - BM25_SERVICE_URL=http://bm25:8002
+      - FUSION_SERVICE_URL=http://fusion:8003
+      - CACHE_SERVICE_URL=http://cache:8000
+      - COLBERT_SERVICE_URL=http://colbert:8005
+      - SPLADE_SERVICE_URL=http://splade:8006
+    volumes:
+      - ./:/app
+    depends_on:
+      - cache
+      - vector_search
+      - bm25
+      - fusion
+      - colbert
+      - splade
+    networks:
+      - rag_network
+
+  # Redis for Cache Service
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - rag_network
+
+  # Qdrant for Vector Database
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - rag_network
+
+networks:
+  rag_network:
+    driver: bridge
+
+volumes:
+  redis_data:
+  qdrant_data:
+  bm25_data:
+  colbert_data:
+  splade_data:
+  parameter_data:
+  strategy_data:

@@ -136,6 +136,73 @@ class ServiceUnavailableError(Exception):
 # ---------------------------------------------------------------------------
 
 
+def extract_column_mapping(lines: list, separator_idx: int) -> dict:
+    """
+    Extract column-region mapping from multi-row headers in tables.
+    
+    This function analyzes table headers to create a mapping between columns and regions,
+    which is essential for tables with multi-row headers (like geographical regions
+    specified in the second header row).
+    
+    Args:
+        lines: List of all table lines as strings
+        separator_idx: Index of the separator line (with dashes/pipes)
+        
+    Returns:
+        Dictionary mapping column indices to their regional context
+    """
+    # If no headers or only one header row, return empty mapping
+    if separator_idx <= 0:
+        return {}
+    
+    # Get header rows (excluding the separator line)
+    header_rows = [lines[i] for i in range(separator_idx)]
+    
+    # Parse column positions from separator line
+    separator = lines[separator_idx]
+    column_positions = []
+    in_column = False
+    
+    for i, char in enumerate(separator):
+        if char == '|':
+            if in_column:
+                column_positions.append((start_pos, i))
+                in_column = False
+            else:
+                start_pos = i
+                in_column = True
+    
+    # Handle last column if needed
+    if in_column:
+        column_positions.append((start_pos, len(separator)))
+    
+    # Initialize mapping
+    column_mapping = {}
+    
+    # If we have multiple header rows, extract region information
+    if len(header_rows) >= 2:
+        # Extract region labels from the second row (index 1)
+        if len(header_rows) > 1:
+            region_row = header_rows[1]
+            # Extract labels from each column position
+            for idx, (start, end) in enumerate(column_positions):
+                if start < len(region_row) and end <= len(region_row):
+                    # Extract region label, handling limited-width columns
+                    label = region_row[start:end].strip(' |').strip()
+                    if label:
+                        column_mapping[idx] = label
+    
+    # If no regions found in second row but we have more header rows, try the first row
+    if not column_mapping and header_rows:
+        first_row = header_rows[0]
+        for idx, (start, end) in enumerate(column_positions):
+            if start < len(first_row) and end <= len(first_row):
+                label = first_row[start:end].strip(' |').strip()
+                if label:
+                    column_mapping[idx] = label
+    
+    return column_mapping
+
 def iter_batches(seq: Sequence[Document], batch_size: int) -> Iterable[List[Document]]:
     """Yield items *seq* in lists of length *batch_size* (the last one may be shorter)."""
 
@@ -1270,13 +1337,36 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
                                 md = elem.get_text()
                             lines = md.splitlines()
                             if len(lines) > 2:
-                                header, sep = lines[0], lines[1]
-                                for row_idx, row_content in enumerate(lines[2:]):
+                                # Find all header rows (not just the first)
+                                header_separator_idx = 1  # Default separator is at line 1
+                                
+                                # Find the actual separator line (the line with dashes/pipes)
+                                for i, line in enumerate(lines):
+                                    if all(c in '|-+: ' for c in line) and '|' in line:
+                                        header_separator_idx = i
+                                        break
+                                
+                                # Get all header rows
+                                header_rows = [lines[i] for i in range(header_separator_idx)]
+                                header_text = "\n".join(header_rows) + "\n" + lines[header_separator_idx]
+                                
+                                # Extract column-region mapping
+                                column_mapping = extract_column_mapping(lines, header_separator_idx)
+                                
+                                for row_idx, row_content in enumerate(lines[header_separator_idx + 1:]):
                                     row = row_content.strip()
                                     if not row:
                                         continue
-                                    row_md = f"{header}\n{sep}\n{row}"
-                                    docs_url.append(Document(content=row_md, metadata={"source": source, "is_table": True, "table_row_index": row_idx}))
+                                    # Include all header rows in each chunk
+                                    row_md = f"{header_text}\n{row}"
+                                    # Enhanced metadata with column mapping
+                                    metadata = {
+                                        "source": source,
+                                        "is_table": True,
+                                        "table_row_index": row_idx,
+                                        "column_mapping": column_mapping
+                                    }
+                                    docs_url.append(Document(content=row_md, metadata=metadata))
                             else:
                                 docs_url.append(Document(content=md, metadata={"source": source, "is_table": True}))
                         elif hasattr(elem, "text") and isinstance(elem.text, str):
@@ -1364,14 +1454,36 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
                         # Split table into row-level chunks for better embeddings
                         lines = md.splitlines()
                         if len(lines) > 2:
-                            header = lines[0]
-                            sep = lines[1]
-                            for row_idx, row_content in enumerate(lines[2:]):
+                            # Find all header rows (not just the first)
+                            header_separator_idx = 1  # Default separator is at line 1
+                            
+                            # Find the actual separator line (the line with dashes/pipes)
+                            for i, line in enumerate(lines):
+                                if all(c in '|-+: ' for c in line) and '|' in line:
+                                    header_separator_idx = i
+                                    break
+                            
+                            # Get all header rows
+                            header_rows = [lines[i] for i in range(header_separator_idx)]
+                            header_text = "\n".join(header_rows) + "\n" + lines[header_separator_idx]
+                            
+                            # Extract column-region mapping
+                            column_mapping = extract_column_mapping(lines, header_separator_idx)
+                            
+                            for row_idx, row_content in enumerate(lines[header_separator_idx + 1:]):
                                 row = row_content.strip()
                                 if not row:
                                     continue
-                                row_md = f"{header}\n{sep}\n{row}"
-                                docs_pdf.append(Document(content=row_md, metadata={"source": source, "is_table": True, "table_row_index": row_idx}))
+                                # Include all header rows in each chunk
+                                row_md = f"{header_text}\n{row}"
+                                # Enhanced metadata with column mapping
+                                metadata = {
+                                    "source": source,
+                                    "is_table": True,
+                                    "table_row_index": row_idx,
+                                    "column_mapping": column_mapping
+                                }
+                                docs_pdf.append(Document(content=row_md, metadata=metadata))
                         else:
                             docs_pdf.append(Document(content=md, metadata={"source": source, "is_table": True}))
                     elif hasattr(elem, 'text') and isinstance(elem.text, str):
@@ -1399,6 +1511,20 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
         # HTML parsing
         if ext in ('.html', '.htm'):
             try:
+                # Import our improved table processing
+                try:
+                    from table_ingestion import process_html_file
+                    
+                    # Use our graph-based table processing with context preservation
+                    docs_html = process_html_file(source)
+                    if docs_html:
+                        return docs_html
+                except ImportError:
+                    # If table_ingestion module is not available, log a warning
+                    click.echo("[warning] table_ingestion module not found. Using standard processing.", err=True)
+                
+                # Fall back to enhanced standard processing if the module isn't available
+                # or if it didn't find any tables
                 from unstructured.partition.html import partition_html
                 from unstructured.documents.elements import Table
                 elements = partition_html(source)
@@ -1412,19 +1538,42 @@ def load_documents(source: str, chunk_size: int = 500, overlap: int = 50, crawl_
                         # Split table into row-level chunks for better embeddings
                         lines = md.splitlines()
                         if len(lines) > 2:
-                            header = lines[0]
-                            sep = lines[1]
-                            for row_idx, row_content in enumerate(lines[2:]):
+                            # Find all header rows (not just the first)
+                            header_separator_idx = 1  # Default separator is at line 1
+                            
+                            # Find the actual separator line (the line with dashes/pipes)
+                            for i, line in enumerate(lines):
+                                if all(c in '|-+: ' for c in line) and '|' in line:
+                                    header_separator_idx = i
+                                    break
+                            
+                            # Get all header rows
+                            header_rows = [lines[i] for i in range(header_separator_idx)]
+                            header_text = "\n".join(header_rows) + "\n" + lines[header_separator_idx]
+                            
+                            # Extract column-region mapping
+                            column_mapping = extract_column_mapping(lines, header_separator_idx)
+                            
+                            for row_idx, row_content in enumerate(lines[header_separator_idx + 1:]):
                                 row = row_content.strip()
                                 if not row:
                                     continue
-                                row_md = f"{header}\n{sep}\n{row}"
-                                docs_html.append(Document(content=row_md, metadata={"source": source, "is_table": True, "table_row_index": row_idx}))
-                            else:
-                                docs_html.append(Document(content=md, metadata={"source": source, "is_table": True}))
-                        elif hasattr(elem, 'text') and isinstance(elem.text, str):
-                            txt = elem.text
-                            docs_html.extend(_chunk_text_tokenwise(txt, {"source": source}))
+                                # Include all header rows in each chunk
+                                row_md = f"{header_text}\n{row}"
+                                # Enhanced metadata with column mapping
+                                metadata = {
+                                    "source": source,
+                                    "is_table": True,
+                                    "table_row_index": row_idx,
+                                    "column_mapping": column_mapping
+                                }
+                                docs_html.append(Document(content=row_md, metadata=metadata))
+                        else:
+                            # Fixed indentation error - this was at the wrong level
+                            docs_html.append(Document(content=md, metadata={"source": source, "is_table": True}))
+                    elif hasattr(elem, 'text') and isinstance(elem.text, str):
+                        txt = elem.text
+                        docs_html.extend(_chunk_text_tokenwise(txt, {"source": source}))
                 return docs_html
             except Exception as e:
                 click.echo(f"[warning] Unstructured HTML parse failed for '{source}': {e}", err=True)
@@ -1588,6 +1737,117 @@ def ensure_collection(client, collection_name: str, vector_size: int, distance: 
     )
 
 
+# Dynamic worker pool for parallel embedding operations
+class DynamicWorkerPool:
+    """Thread-safe dynamic worker pool that adjusts the number of workers based on success/failure rates."""
+    
+    def __init__(self, initial_workers=20, min_workers=1, max_workers=50,
+                 success_threshold=5, failure_threshold=2):
+        """
+        Initialize the dynamic worker pool.
+        
+        Args:
+            initial_workers: Number of workers to start with
+            min_workers: Minimum number of workers allowed
+            max_workers: Maximum number of workers allowed
+            success_threshold: Number of consecutive successes before increasing workers
+            failure_threshold: Number of consecutive failures before decreasing workers
+        """
+        import threading
+        self.current_workers = initial_workers
+        self.min_workers = min_workers
+        self.max_workers = max_workers
+        self.success_threshold = success_threshold
+        self.failure_threshold = failure_threshold
+        self.lock = threading.Lock()
+        self.success_count = 0
+        self.failure_count = 0
+        self.consecutive_successes = 0
+        self.consecutive_failures = 0
+        self.adjustment_history = []
+        
+    def report_success(self):
+        """
+        Report a successful operation. Increases worker count if threshold is reached.
+        
+        Returns:
+            bool: Whether the worker count was adjusted
+        """
+        with self.lock:
+            self.success_count += 1
+            self.consecutive_successes += 1
+            self.consecutive_failures = 0
+            
+            # Increase workers after consecutive successes
+            if self.consecutive_successes >= self.success_threshold and self.current_workers < self.max_workers:
+                prev_workers = self.current_workers
+                # Increase by 25% or at least 1 worker
+                increase = max(1, self.current_workers // 4)
+                self.current_workers = min(self.max_workers, self.current_workers + increase)
+                self.consecutive_successes = 0
+                
+                # Record adjustment
+                self.adjustment_history.append({
+                    "timestamp": datetime.now().isoformat(),
+                    "previous": prev_workers,
+                    "current": self.current_workers,
+                    "reason": "success",
+                    "total_success": self.success_count,
+                    "total_failure": self.failure_count
+                })
+                return True
+        return False
+        
+    def report_failure(self):
+        """
+        Report a failed operation. Decreases worker count if threshold is reached.
+        
+        Returns:
+            bool: Whether the worker count was adjusted
+        """
+        with self.lock:
+            self.failure_count += 1
+            self.consecutive_failures += 1
+            self.consecutive_successes = 0
+            
+            # Decrease workers when failures occur
+            if self.consecutive_failures >= self.failure_threshold and self.current_workers > self.min_workers:
+                prev_workers = self.current_workers
+                # Decrease by 30% or at least 1 worker
+                decrease = max(1, self.current_workers // 3)
+                self.current_workers = max(self.min_workers, self.current_workers - decrease)
+                self.consecutive_failures = 0
+                
+                # Record adjustment
+                self.adjustment_history.append({
+                    "timestamp": datetime.now().isoformat(),
+                    "previous": prev_workers,
+                    "current": self.current_workers,
+                    "reason": "failure",
+                    "total_success": self.success_count,
+                    "total_failure": self.failure_count
+                })
+                return True
+        return False
+        
+    def get_worker_count(self):
+        """Get the current worker count in a thread-safe manner."""
+        with self.lock:
+            return self.current_workers
+            
+    def get_stats(self):
+        """Get statistics about the worker pool."""
+        with self.lock:
+            return {
+                "current_workers": self.current_workers,
+                "success_count": self.success_count,
+                "failure_count": self.failure_count,
+                "consecutive_successes": self.consecutive_successes,
+                "consecutive_failures": self.consecutive_failures,
+                "adjustments": len(self.adjustment_history),
+                "adjustment_history": self.adjustment_history
+            }
+
 def embed_and_upsert(
     client,
     collection: str,
@@ -1597,9 +1857,13 @@ def embed_and_upsert(
     model_name: str = "text-embedding-3-large",
     deterministic_id: bool = False,
     parallel: int = 15,
+    initial_workers: int = 20,  # Start with 20 parallel workers
+    min_workers: int = 1,       # Minimum number of workers
+    max_workers: int = 50,      # Maximum number of workers
+    dynamic_workers: bool = True,  # Enable/disable dynamic worker adjustment
 ):
     """Embed *docs* in batches and upsert them into Qdrant with optimized batch handling,
-    retry logic, and comprehensive metrics tracking."""
+    retry logic, comprehensive metrics tracking, and dynamic worker adjustment."""
     
     # Initialize embedding metrics
     embedding_metrics = {
@@ -1927,26 +2191,83 @@ def embed_and_upsert(
     import inspect
     import time
     
-    # Adaptive concurrency - reduce parallelism for very large batches
-    effective_parallel = min(parallel, max(1, 30 // max(1, total_batches // 10)))
-    click.echo(f"[info] Embedding & upserting in {total_batches} batch(es) using {effective_parallel} workers")
-    logger.info(f"Embedding & upserting in {total_batches} batch(es) using {effective_parallel} workers")
+    # Initialize dynamic worker pool
+    worker_pool = DynamicWorkerPool(
+        initial_workers=initial_workers if dynamic_workers else parallel,
+        min_workers=min_workers,
+        max_workers=max_workers
+    )
+    
+    # Add worker pool info to metrics
+    embedding_metrics["worker_pool"] = {
+        "initial_workers": worker_pool.current_workers,
+        "min_workers": worker_pool.min_workers,
+        "max_workers": worker_pool.max_workers,
+        "dynamic_enabled": dynamic_workers,
+        "adjustments": []
+    }
+    
+    # Modify process_batch to report success/failure to worker pool
+    original_process_batch = process_batch
+    
+    def process_batch_with_tracking(batch):
+        try:
+            original_process_batch(batch)
+            
+            # Report success to worker pool
+            if dynamic_workers and worker_pool.report_success():
+                new_count = worker_pool.get_worker_count()
+                logger.info(f"Increased worker count to {new_count} after successful embedding")
+                embedding_metrics["worker_pool"]["adjustments"].append({
+                    "timestamp": datetime.now().isoformat(),
+                    "new_count": new_count,
+                    "previous_count": new_count - (new_count - worker_pool.adjustment_history[-1]["previous"]),
+                    "reason": "success"
+                })
+            return True
+        except Exception as e:
+            # Report failure to worker pool
+            if dynamic_workers and worker_pool.report_failure():
+                new_count = worker_pool.get_worker_count()
+                logger.warning(f"Decreased worker count to {new_count} after embedding failure: {str(e)}")
+                embedding_metrics["worker_pool"]["adjustments"].append({
+                    "timestamp": datetime.now().isoformat(),
+                    "new_count": new_count,
+                    "previous_count": new_count + (worker_pool.adjustment_history[-1]["previous"] - new_count),
+                    "reason": "failure",
+                    "error_type": type(e).__name__
+                })
+            return False
+    
+    # Process batches in chunks to allow worker count adjustments
+    chunk_size = min(100, max(10, total_batches // 5))  # Aim for 5-10 chunks
+    batch_chunks = [token_optimized_batches[i:i+chunk_size] for i in range(0, len(token_optimized_batches), chunk_size)]
+    
+    click.echo(f"[info] Embedding & upserting in {total_batches} batch(es) using dynamic worker pool (starting with {worker_pool.get_worker_count()} workers)")
+    logger.info(f"Embedding & upserting in {total_batches} batch(es) using dynamic worker pool (starting with {worker_pool.get_worker_count()} workers)")
     
     start_time = time.time()
     completed_batches = 0
     success_count = 0
     
-    with ThreadPoolExecutor(max_workers=effective_parallel) as executor:
-        futures = [executor.submit(process_batch, batch) for batch in token_optimized_batches]
+    for chunk_idx, batch_chunk in enumerate(batch_chunks):
+        current_workers = worker_pool.get_worker_count()
+        chunk_desc = f"Chunk {chunk_idx+1}/{len(batch_chunks)}"
         
-        for future in tqdm(as_completed(futures), total=total_batches, desc="Embedding & upserting"):
-            completed_batches += 1
+        click.echo(f"[info] Processing {chunk_desc} using {current_workers} workers ({len(batch_chunk)} batches)")
+        logger.info(f"Processing {chunk_desc} using {current_workers} workers ({len(batch_chunk)} batches)")
+        
+        with ThreadPoolExecutor(max_workers=current_workers) as executor:
+            futures = [executor.submit(process_batch_with_tracking, batch) for batch in batch_chunk]
             
-            # Check if the future raised an exception
-            if future.exception():
-                logger.error(f"Batch processing raised exception: {future.exception()}")
-            else:
-                success_count += 1
+            for future in tqdm(as_completed(futures), total=len(batch_chunk), desc=f"{chunk_desc} embedding"):
+                completed_batches += 1
+                
+                # Check if the future raised an exception
+                if future.exception():
+                    logger.error(f"Batch processing raised exception: {future.exception()}")
+                elif future.result() is True:  # Check explicit success result
+                    success_count += 1
             
             # Log progress periodically
             if completed_batches % max(1, total_batches // 10) == 0:
@@ -1970,14 +2291,27 @@ def embed_and_upsert(
         "completed_at": datetime.now().isoformat()
     })
     
+    # Add worker pool stats to metrics
+    final_stats = worker_pool.get_stats()
+    embedding_metrics["worker_pool"].update({
+        "final_workers": final_stats["current_workers"],
+        "total_adjustments": final_stats["adjustments"],
+        "final_stats": final_stats
+    })
+    
     # Save metrics to INGESTION_DIAGNOSTICS
     INGESTION_DIAGNOSTICS["embedding_metrics"] = embedding_metrics
     
     # Log final statistics
     logger.info(f"Embedding complete: {success_count}/{total_batches} batches successful ({success_rate:.1f}%)")
     logger.info(f"Total embedding time: {total_time:.2f}s, avg {avg_time_per_batch:.2f}s per batch")
+    logger.info(f"Dynamic worker pool: started={initial_workers}, ended={final_stats['current_workers']}, " +
+               f"made {final_stats['adjustments']} adjustments")
+    
     click.echo(f"[info] Embedding complete: {success_count}/{total_batches} batches successful ({success_rate:.1f}%)")
     click.echo(f"[info] Total embedding time: {total_time:.2f}s, avg {avg_time_per_batch:.2f}s per batch")
+    click.echo(f"[info] Dynamic worker pool: started={initial_workers}, ended={final_stats['current_workers']}, " +
+              f"made {final_stats['adjustments']} adjustments")
     
     if embedding_metrics["retry_count"] > 0:
         logger.info(f"Required {embedding_metrics['retry_count']} retries due to temporary errors")
@@ -2009,6 +2343,10 @@ def embed_and_upsert(
 @click.option("--chunk-overlap", type=int, default=50, show_default=True, help="Overlap (tokens) between chunks.")
 @click.option("--crawl-depth", type=int, default=0, show_default=True, help="When SOURCE is a URL, crawl hyperlinks up to this depth (0=no crawl).")
 @click.option("--parallel", type=int, default=15, show_default=True, help="Number of parallel workers for Qdrant upsert.")
+@click.option("--initial-workers", type=int, default=20, show_default=True, help="Starting number of workers for embedding processing.")
+@click.option("--min-workers", type=int, default=1, show_default=True, help="Minimum number of workers allowed during dynamic adjustment.")
+@click.option("--max-workers", type=int, default=50, show_default=True, help="Maximum number of workers allowed during dynamic adjustment.")
+@click.option("--dynamic-workers/--no-dynamic-workers", default=True, show_default=True, help="Enable/disable dynamic worker adjustment based on success/failure.")
 @click.option("--fast-chunking/--precise-chunking", default=True, show_default=True,
               help="Use fast heuristic-based semantic chunking (faster) or transformer-based semantic chunking (more precise but much slower).")
 @click.option("--generate-summaries/--no-generate-summaries", default=True, show_default=True,
@@ -2091,6 +2429,10 @@ def cli(
     chunk_overlap: int,
     crawl_depth: int,
     parallel: int,
+    initial_workers: int,
+    min_workers: int,
+    max_workers: int,
+    dynamic_workers: bool,
     fast_chunking: bool,
     generate_summaries: bool,
     quality_checks: bool,
@@ -2673,6 +3015,10 @@ def cli(
                     batch_size=batch_size,
                     deterministic_id=True,
                     parallel=parallel,
+                    initial_workers=initial_workers,
+                    min_workers=min_workers,
+                    max_workers=max_workers,
+                    dynamic_workers=dynamic_workers,
                 )
             except Exception as embed_e:
                 # Critical failure handling - try with smaller batch size and sequential processing
@@ -2689,6 +3035,10 @@ def cli(
                     batch_size=reduced_batch,
                     deterministic_id=True,
                     parallel=1,  # Sequential processing
+                    initial_workers=min_workers,  # Start with minimum workers in fallback
+                    min_workers=min_workers,
+                    max_workers=max_workers,
+                    dynamic_workers=dynamic_workers,
                 )
     else:
         # Standard embedding approach
@@ -2700,6 +3050,10 @@ def cli(
             batch_size=batch_size,
             deterministic_id=True,
             parallel=parallel,
+            initial_workers=initial_workers,
+            min_workers=min_workers,
+            max_workers=max_workers,
+            dynamic_workers=dynamic_workers,
         )
 
     click.secho(f"\n[success] Ingestion completed. Collection '{collection}' now holds the embeddings.", fg="green")

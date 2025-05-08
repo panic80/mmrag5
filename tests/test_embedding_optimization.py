@@ -136,5 +136,70 @@ class TestEmbeddingOptimization(unittest.TestCase):
             unittest.mock.ANY  # Match any string containing 'Embedding complete'
         )
 
+    @patch('ingest_rag.logger')
+    @patch('ingest_rag.click')
+    def test_dynamic_worker_pool(self, mock_click, mock_logger):
+        """Test that dynamic worker pool adjusts based on success/failure"""
+        # Import DynamicWorkerPool for direct testing
+        from ingest_rag import DynamicWorkerPool
+        
+        # Create and test the worker pool directly
+        pool = DynamicWorkerPool(
+            initial_workers=20,
+            min_workers=5,
+            max_workers=40,
+            success_threshold=3,
+            failure_threshold=2
+        )
+        
+        # Verify initial state
+        self.assertEqual(pool.current_workers, 20)
+        self.assertEqual(pool.consecutive_successes, 0)
+        self.assertEqual(pool.consecutive_failures, 0)
+        
+        # Test worker increase after success
+        for _ in range(3):  # Hit success threshold
+            pool.report_success()
+        
+        # Verify workers increased
+        self.assertTrue(pool.current_workers > 20)
+        self.assertEqual(pool.consecutive_successes, 0)  # Reset after adjustment
+        self.assertEqual(pool.consecutive_failures, 0)
+        
+        # Test worker decrease after failure
+        for _ in range(2):  # Hit failure threshold
+            pool.report_failure()
+        
+        # Verify workers decreased
+        self.assertTrue(pool.current_workers < 40)
+        self.assertEqual(pool.consecutive_failures, 0)  # Reset after adjustment
+        
+        # Check adjustment history is recorded
+        self.assertEqual(len(pool.adjustment_history), 2)
+        self.assertEqual(pool.adjustment_history[0]["reason"], "success")
+        self.assertEqual(pool.adjustment_history[1]["reason"], "failure")
+        
+        # Test the integration with embed_and_upsert
+        # Call the function with dynamic workers enabled
+        embed_and_upsert(
+            self.mock_client,
+            "test_collection",
+            self.docs,
+            self.mock_openai_client,
+            batch_size=3,
+            model_name="text-embedding-3-large",
+            deterministic_id=True,
+            parallel=1,
+            initial_workers=10,
+            min_workers=2,
+            max_workers=20,
+            dynamic_workers=True
+        )
+        
+        # Verify worker pool metrics are logged
+        mock_logger.info.assert_any_call(
+            unittest.mock.ANY  # Match any string containing 'Dynamic worker pool'
+        )
+
 if __name__ == '__main__':
     unittest.main()

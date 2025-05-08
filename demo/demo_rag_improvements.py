@@ -471,8 +471,19 @@ def simulate_original_embedding(texts):
     return results, stats
 
 def simulate_optimized_embedding(texts):
-    """Simulate the optimized embedding approach (batched, with retries)."""
+    """Simulate the optimized embedding approach (batched, with retries, and dynamic workers)."""
     start_time = time.time()
+    
+    # Create a mock dynamic worker pool
+    worker_pool = {
+        "initial_workers": 20,
+        "current_workers": 20,
+        "min_workers": 5,
+        "max_workers": 40,
+        "adjustments": [],
+        "success_count": 0,
+        "failure_count": 0
+    }
     
     # Estimate tokens more accurately
     token_estimates = [len(text.split()) * 1.3 for text in texts]
@@ -515,7 +526,46 @@ def simulate_optimized_embedding(texts):
         if random.random() < 0.05:  # 5% chance (lower than original)
             rate_limits += 1
             retries += 1
+            # Simulate worker pool adjustment due to failure
+            worker_pool["failure_count"] += 1
+            
+            # Decrease workers if above minimum
+            if worker_pool["current_workers"] > worker_pool["min_workers"]:
+                old_workers = worker_pool["current_workers"]
+                # Decrease by ~30% or at least 1
+                decrease = max(1, worker_pool["current_workers"] // 3)
+                worker_pool["current_workers"] -= decrease
+                
+                # Record adjustment
+                worker_pool["adjustments"].append({
+                    "type": "decrease",
+                    "reason": "failure",
+                    "previous": old_workers,
+                    "current": worker_pool["current_workers"],
+                    "time": time.time()
+                })
+            
             # But we always succeed on retry in optimized version
+        else:
+            # Successful processing - track for worker adjustment
+            worker_pool["success_count"] += 1
+            
+            # Increase workers if we've had 3+ consecutive successes and below max
+            if worker_pool["success_count"] >= 3 and worker_pool["current_workers"] < worker_pool["max_workers"]:
+                old_workers = worker_pool["current_workers"]
+                # Increase by ~25% or at least 1
+                increase = max(1, worker_pool["current_workers"] // 4)
+                worker_pool["current_workers"] += increase
+                worker_pool["success_count"] = 0  # Reset counter
+                
+                # Record adjustment
+                worker_pool["adjustments"].append({
+                    "type": "increase",
+                    "reason": "success",
+                    "previous": old_workers,
+                    "current": worker_pool["current_workers"],
+                    "time": time.time()
+                })
         
         # Add mock embedding results for the batch
         results.extend([MockEmbedding([random.random() for _ in range(3)]) for _ in batch])
@@ -532,6 +582,15 @@ def simulate_optimized_embedding(texts):
         "processing_time": elapsed_time,
         "texts_per_second": len(texts) / elapsed_time if elapsed_time > 0 else 0,
         "tokens_per_second": tokens_used / elapsed_time if elapsed_time > 0 else 0,
+        # Worker pool statistics
+        "worker_pool": {
+            "initial_workers": worker_pool["initial_workers"],
+            "final_workers": worker_pool["current_workers"],
+            "min_workers": worker_pool["min_workers"],
+            "max_workers": worker_pool["max_workers"],
+            "adjustments_made": len(worker_pool["adjustments"]),
+            "adjustment_details": worker_pool["adjustments"]
+        }
     }
     
     return results, stats
@@ -788,12 +847,42 @@ def display_embedding_optimization_comparison(sample_name, text):
     table.add_row("Processing Time", f"{original_stats['processing_time']:.2f}s", f"{optimized_stats['processing_time']:.2f}s")
     table.add_row("Texts/Second", f"{original_stats['texts_per_second']:.2f}", f"{optimized_stats['texts_per_second']:.2f}")
     
+    # Add worker pool information (only in optimized version)
+    if 'worker_pool' in optimized_stats:
+        table.add_row(
+            "Worker Management",
+            "Fixed (No Adaptation)",
+            f"Dynamic ({optimized_stats['worker_pool']['initial_workers']} → {optimized_stats['worker_pool']['final_workers']} workers)"
+        )
+        table.add_row(
+            "Worker Adjustments",
+            "None",
+            f"{optimized_stats['worker_pool']['adjustments_made']} adjustments based on success/failure"
+        )
+    
     console.print(table)
     
     # Calculate improvement percentages
     call_reduction = 100 * (original_stats['api_calls'] - optimized_stats['api_calls']) / original_stats['api_calls']
     speedup = optimized_stats['texts_per_second'] / original_stats['texts_per_second'] if original_stats['texts_per_second'] > 0 else 0
     
+    # Add dynamic worker pool information if available
+    worker_info = ""
+    if 'worker_pool' in optimized_stats:
+        wp = optimized_stats['worker_pool']
+        worker_adjustments = wp['adjustment_details']
+        increases = sum(1 for adj in worker_adjustments if adj['type'] == 'increase')
+        decreases = sum(1 for adj in worker_adjustments if adj['type'] == 'decrease')
+        
+        worker_info = f"""
+[bold]Dynamic Worker Pool:[/bold]
+Initial Workers: {wp['initial_workers']}
+Final Workers: {wp['final_workers']}
+Worker Range: {wp['min_workers']} - {wp['max_workers']}
+Total Adjustments: {wp['adjustments_made']} ({increases} increases, {decreases} decreases)
+Adaptation: {'Scaled up' if wp['final_workers'] > wp['initial_workers'] else 'Scaled down' if wp['final_workers'] < wp['initial_workers'] else 'Maintained'} based on performance
+"""
+
     console.print(Panel(f"""
 [bold]Embedding Optimization Summary:[/bold]
 
@@ -801,6 +890,7 @@ API Call Reduction: {call_reduction:.1f}%
 Processing Speedup: {speedup:.1f}x
 Error Reduction: {100 * (original_stats['rate_limit_errors'] - optimized_stats['rate_limit_errors']) / max(1, original_stats['rate_limit_errors']):.1f}%
 Token Efficiency: {100 * original_stats['tokens_used'] / optimized_stats['tokens_used']:.1f}% of original
+{worker_info}
     """))
 
 def create_summary_report(results):
@@ -852,6 +942,14 @@ def create_summary_report(results):
    - Monitor API call count reduction in processing
    - Check for batched calls instead of individual calls
    - Verify retry mechanism handles rate limits properly
+   - Observe dynamic worker pool in action:
+     - Start with initial worker count (default: 20)
+     - Watch as workers scale up after successful operations
+     - Verify workers decrease when encountering failures
+   - Run with different worker settings to optimize for your environment:
+     - Use --initial-workers to set starting workers
+     - Use --min-workers and --max-workers to set scaling bounds
+     - Use --dynamic-workers/--no-dynamic-workers to toggle the feature
 
 For a complete test suite that verifies all improvements, run:
 [bold]python tests/test_improvements.py[/bold]
@@ -969,9 +1067,9 @@ def run_demo():
     # Store results for summary
     summary_results['embedding'] = {
         'name': 'Embedding API Optimization',
-        'before': 'One API call per chunk, poor error handling',
-        'after': 'Batched calls, intelligent retry, monitoring',
-        'impact': 'Lower costs, higher throughput, better reliability'
+        'before': 'One API call per chunk, poor error handling, fixed parallelism',
+        'after': 'Batched calls, intelligent retry, monitoring, dynamic worker scaling',
+        'impact': 'Lower costs, higher throughput, better reliability, optimal resource utilization'
     }
     
     # Create comprehensive summary report

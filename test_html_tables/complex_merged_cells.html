@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Complex Table with Merged Cells</title>
+</head>
+<body>
+    <h1>Complex Table with Merged Cells</h1>
+    <p>This table tests how the system handles merged cells (rowspan and colspan).</p>
+    
+    <table border="1">
+        <thead>
+            <tr>
+                <th rowspan="2">Category</th>
+                <th colspan="3">Sales Data</th>
+                <th rowspan="2">Comments</th>
+            </tr>
+            <tr>
+                <th>Q1</th>
+                <th>Q2</th>
+                <th>Q3</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td rowspan="2">Electronics</td>
+                <td>$25,000</td>
+                <td>$27,000</td>
+                <td>$30,000</td>
+                <td rowspan="2">Growth trend observed</td>
+            </tr>
+            <tr>
+                <td>15 units</td>
+                <td>17 units</td>
+                <td>20 units</td>
+            </tr>
+            <tr>
+                <td>Furniture</td>
+                <td colspan="3">$120,000 (combined quarters)</td>
+                <td>Seasonal demand</td>
+            </tr>
+            <tr>
+                <td>Clothing</td>
+                <td>$18,000</td>
+                <td colspan="2">$45,000 (Q2+Q3 combined)</td>
+                <td>Summer collection successful</td>
+            </tr>
+        </tbody>
+        <tfoot>
+            <tr>
+                <td>Totals</td>
+                <td>$43,000</td>
+                <td>$27,000</td>
+                <td>$30,000</td>
+                <td>Projected Q4: $50,000</td>
+            </tr>
+        </tfoot>
+    </table>
+</body>
+</html>

@@ -336,8 +336,68 @@ class TestEmbeddingOptimization(unittest.TestCase):
         log_calls = [call[0][0] for call in mock_logger.info.call_args_list]
         
         performance_logs = [call for call in log_calls if 'sec' in call]
-        self.assertGreaterEqual(len(performance_logs), 1, 
+        self.assertGreaterEqual(len(performance_logs), 1,
                                "Should log performance metrics")
+    
+    @patch('ingest_rag.logger')
+    def test_dynamic_worker_adjustment(self, mock_logger):
+        """Test that the dynamic worker pool adjusts based on success/failure."""
+        # Import the DynamicWorkerPool class directly
+        from ingest_rag import DynamicWorkerPool
+        
+        # Test direct operations on worker pool
+        pool = DynamicWorkerPool(
+            initial_workers=20,
+            min_workers=5,
+            max_workers=30,
+            success_threshold=2,  # Lower threshold for faster testing
+            failure_threshold=2
+        )
+        
+        # Initial state
+        self.assertEqual(pool.current_workers, 20)
+        
+        # Report multiple successes to trigger worker increase
+        initial_workers = pool.current_workers
+        pool.report_success()
+        pool.report_success()  # Should trigger increase
+        self.assertGreater(pool.current_workers, initial_workers,
+                          "Worker count should increase after successes")
+        
+        # Report multiple failures to trigger worker decrease
+        adjusted_workers = pool.current_workers
+        pool.report_failure()
+        pool.report_failure()  # Should trigger decrease
+        self.assertLess(pool.current_workers, adjusted_workers,
+                       "Worker count should decrease after failures")
+        
+        # Verify adjustment history
+        self.assertEqual(len(pool.adjustment_history), 2,
+                        "Should record two adjustments")
+        self.assertEqual(pool.adjustment_history[0]["reason"], "success")
+        self.assertEqual(pool.adjustment_history[1]["reason"], "failure")
+        
+        # Test integration with embed_and_upsert
+        embed_and_upsert(
+            self.mock_client,
+            "test_collection",
+            self.docs,
+            self.mock_openai,
+            model_name="text-embedding-3-large",
+            deterministic_id=True,
+            initial_workers=15,
+            min_workers=5,
+            max_workers=30,
+            dynamic_workers=True
+        )
+        
+        # Verify worker pool functionality was logged
+        dynamic_worker_logs = [
+            call for call in mock_logger.info.call_args_list
+            if call[0] and isinstance(call[0][0], str) and "worker" in call[0][0].lower()
+        ]
+        self.assertGreaterEqual(len(dynamic_worker_logs), 1,
+                              "Should log messages about dynamic worker pool")
 
 if __name__ == '__main__':
     unittest.main()

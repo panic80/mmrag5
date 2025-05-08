@@ -1,0 +1,563 @@
+2025-05-08 08:23:49,037 - table_diagnosis - INFO - Successfully imported ingest_rag module
+2025-05-08 08:23:49,038 - table_diagnosis - INFO - Found 4 HTML test files
+2025-05-08 08:23:49,038 - table_diagnosis - INFO - ================================================================================
+2025-05-08 08:23:49,038 - table_diagnosis - INFO - PROCESSING: test_html_tables/large_table.html
+2025-05-08 08:23:49,038 - table_diagnosis - INFO - ================================================================================
+2025-05-08 08:23:49,038 - table_diagnosis - INFO - Processing HTML file: test_html_tables/large_table.html
+2025-05-08 08:23:49,038 - table_diagnosis - INFO - HTML content size: 9053 bytes
+2025-05-08 08:23:49,041 - table_diagnosis - INFO - Found 1 tables in the HTML
+2025-05-08 08:23:49,041 - table_diagnosis - INFO - Table 1 structure:
+2025-05-08 08:23:49,041 - table_diagnosis - INFO -   - Contains 21 rows
+2025-05-08 08:23:49,042 - table_diagnosis - INFO -   - Has thead: True
+2025-05-08 08:23:49,042 - table_diagnosis - INFO -   - Has tbody: True
+2025-05-08 08:23:49,042 - table_diagnosis - INFO -   - Has tfoot: False
+2025-05-08 08:23:49,043 - table_diagnosis - INFO -   - Contains 0 merged cells
+2025-05-08 08:23:49,043 - table_diagnosis - INFO -   - Contains 0 nested tables
+2025-05-08 08:23:49,043 - table_diagnosis - INFO -   - First row has 10 header cells
+2025-05-08 08:23:49,044 - table_diagnosis - INFO -   - Generated markdown representation (2720 chars)
+2025-05-08 08:23:49,044 - table_diagnosis - DEBUG -   - Markdown:
+| ID | First Name | Last Name | Email | Gender | IP Address | Country | City | Company | Job Title |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | John | Smith | jsmith@example.com | Male | 192.168.1.1 | United States | New York | Acme Corp | Software Engineer |
+| 2 | Jane | Doe | jdoe@example.com | Female | 192.168.1.2 | Canada | Toronto | XYZ Inc | Product Manager |
+| 3 | Robert | Johnson | rjohnson@example.com | Male | 192.168.1.3 | United Kingdom | London | Global Systems | CTO |
+| 4 | Mary | Williams | mwilliams@example.com | Female | 192.168.1.4 | Australia | Sydney | Tech Solutions | Data Scientist |
+| 5 | David | Brown | dbrown@example.com | Male | 192.168.1.5 | Germany | Berlin | European Ventures | Marketing Director |
+| 6 | Patricia | Jones | pjones@example.com | Female | 192.168.1.6 | France | Paris | Fashion Forward | Design Lead |
+| 7 | Thomas | Garcia | tgarcia@example.com | Male | 192.168.1.7 | Spain | Madrid | Sol Enterprises | Financial Advisor |
+| 8 | Jennifer | Miller | jmiller@example.com | Female | 192.168.1.8 | Italy | Rome | Mediterranean Trading | Operations Manager |
+| 9 | Charles | Wilson | cwilson@example.com | Male | 192.168.1.9 | Japan | Tokyo | Eastern Technologies | Research Director |
+| 10 | Elizabeth | Moore | emoore@example.com | Female | 192.168.1.10 | Brazil | Rio de Janeiro | South American Imports | Supply Chain Manager |
+| 11 | James | Taylor | jtaylor@example.com | Male | 192.168.1.11 | South Africa | Cape Town | African Resources | Mining Engineer |
+| 12 | Susan | Anderson | sanderson@example.com | Female | 192.168.1.12 | China | Shanghai | Asian Manufacturing | Production Supervisor |
+| 13 | Michael | Thomas | mthomas@example.com | Male | 192.168.1.13 | India | Mumbai | Indian Software | Backend Developer |
+| 14 | Margaret | Jackson | mjackson@example.com | Female | 192.168.1.14 | Russia | Moscow | Northern Exports | International Sales |
+| 15 | William | White | wwhite@example.com | Male | 192.168.1.15 | Mexico | Mexico City | Latin Distributors | Logistics Coordinator |
+| 16 | Linda | Harris | lharris@example.com | Female | 192.168.1.16 | Indonesia | Jakarta | Pacific Trading | Procurement Manager |
+| 17 | Richard | Martin | rmartin@example.com | Male | 192.168.1.17 | Netherlands | Amsterdam | Dutch Innovations | R&D Specialist |
+| 18 | Barbara | Thompson | bthompson@example.com | Female | 192.168.1.18 | Sweden | Stockholm | Nordic Design | UX Designer |
+| 19 | Joseph | Garcia | jgarcia@example.com | Male | 192.168.1.19 | Argentina | Buenos Aires | South Ventures | Business Analyst |
+| 20 | Sarah | Martinez | smartinez@example.com | Female | 192.168.1.20 | Turkey | Istanbul | Bosphorus Trade | HR Manager |
+2025-05-08 08:23:49,044 - table_diagnosis - INFO - Simulating ingest process for test_html_tables/large_table.html
+2025-05-08 08:23:49,256 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): packages.unstructured.io:443
+2025-05-08 08:23:49,580 - urllib3.connectionpool - DEBUG - https://packages.unstructured.io:443 "GET /python-telemetry?version=0.17.2&platform=Darwin&python3.12&arch=arm64&gpu=False&dev=false HTTP/11" 200 598
+2025-05-08 08:23:54,613 - table_diagnosis - INFO - Using unstructured.partition.html to process file
+2025-05-08 08:23:54,616 - table_diagnosis - ERROR - Error in simulation: 
+**********************************************************************
+  Resource [93mpunkt_tab[0m not found.
+  Please use the NLTK Downloader to obtain the resource:
+
+  [31m>>> import nltk
+  >>> nltk.download('punkt_tab')
+  [0m
+  For more information see: https://www.nltk.org/data.html
+
+  Attempted to load [93mtokenizers/punkt_tab/english/[0m
+
+  Searched in:
+    - '/Users/mattermost/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/share/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/lib/nltk_data'
+    - '/usr/share/nltk_data'
+    - '/usr/local/share/nltk_data'
+    - '/usr/lib/nltk_data'
+    - '/usr/local/lib/nltk_data'
+**********************************************************************
+
+2025-05-08 08:23:54,620 - table_diagnosis - ERROR - Traceback (most recent call last):
+  File "/Users/mattermost/Projects/RAG/mmrag5/diagnose_table_ingestion.py", line 166, in simulate_ingest_process
+    elements = partition_html(html_file)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/common/metadata.py", line 162, in wrapper
+    elements = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/chunking/dispatch.py", line 74, in wrapper
+    elements = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 95, in partition_html
+    return list(_HtmlPartitioner.iter_elements(opts))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 206, in iter_elements
+    yield from cls(opts)._iter_elements()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 219, in _iter_elements
+    for e in elements_iter:
+             ^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 361, in iter_elements
+    yield from block_item.iter_elements()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 356, in iter_elements
+    yield from self._element_from_text_or_tail(self.text or "", q, self._ElementCls)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 386, in _element_from_text_or_tail
+    yield from element_accum.flush(ElementCls)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 254, in flush
+    ElementCls = derive_element_type_from_text(normalized_text)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 914, in derive_element_type_from_text
+    if is_possible_narrative_text(text):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 74, in is_possible_narrative_text
+    if exceeds_cap_ratio(text, threshold=cap_threshold):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 270, in exceeds_cap_ratio
+    if sentence_count(text, 3) > 1:
+       ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 219, in sentence_count
+    sentences = sent_tokenize(text)
+                ^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/nlp/tokenize.py", line 54, in sent_tokenize
+    return _sent_tokenize(text)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/__init__.py", line 119, in sent_tokenize
+    tokenizer = _get_punkt_tokenizer(language)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/__init__.py", line 105, in _get_punkt_tokenizer
+    return PunktTokenizer(language)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/punkt.py", line 1744, in __init__
+    self.load_lang(lang)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/punkt.py", line 1749, in load_lang
+    lang_dir = find(f"tokenizers/punkt_tab/{lang}/")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/data.py", line 579, in find
+    raise LookupError(resource_not_found)
+LookupError: 
+**********************************************************************
+  Resource [93mpunkt_tab[0m not found.
+  Please use the NLTK Downloader to obtain the resource:
+
+  [31m>>> import nltk
+  >>> nltk.download('punkt_tab')
+  [0m
+  For more information see: https://www.nltk.org/data.html
+
+  Attempted to load [93mtokenizers/punkt_tab/english/[0m
+
+  Searched in:
+    - '/Users/mattermost/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/share/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/lib/nltk_data'
+    - '/usr/share/nltk_data'
+    - '/usr/local/share/nltk_data'
+    - '/usr/lib/nltk_data'
+    - '/usr/local/lib/nltk_data'
+**********************************************************************
+
+
+2025-05-08 08:23:54,621 - table_diagnosis - INFO - Simulated ingestion produced 0 documents
+2025-05-08 08:23:54,621 - table_diagnosis - INFO - Identified 0 table fragments in documents
+2025-05-08 08:23:54,621 - table_diagnosis - INFO - 
+
+2025-05-08 08:23:54,621 - table_diagnosis - INFO - ================================================================================
+2025-05-08 08:23:54,621 - table_diagnosis - INFO - PROCESSING: test_html_tables/complex_merged_cells.html
+2025-05-08 08:23:54,621 - table_diagnosis - INFO - ================================================================================
+2025-05-08 08:23:54,621 - table_diagnosis - INFO - Processing HTML file: test_html_tables/complex_merged_cells.html
+2025-05-08 08:23:54,621 - table_diagnosis - INFO - HTML content size: 1664 bytes
+2025-05-08 08:23:54,622 - table_diagnosis - INFO - Found 1 tables in the HTML
+2025-05-08 08:23:54,622 - table_diagnosis - INFO - Table 1 structure:
+2025-05-08 08:23:54,622 - table_diagnosis - INFO -   - Contains 7 rows
+2025-05-08 08:23:54,622 - table_diagnosis - INFO -   - Has thead: True
+2025-05-08 08:23:54,623 - table_diagnosis - INFO -   - Has tbody: True
+2025-05-08 08:23:54,623 - table_diagnosis - INFO -   - Has tfoot: True
+2025-05-08 08:23:54,623 - table_diagnosis - INFO -   - Contains 7 merged cells
+2025-05-08 08:23:54,623 - table_diagnosis - INFO -   - Contains 0 nested tables
+2025-05-08 08:23:54,623 - table_diagnosis - INFO -   - First row has 3 header cells
+2025-05-08 08:23:54,623 - table_diagnosis - DEBUG - Found merged cell: rowspan=2, colspan=1
+2025-05-08 08:23:54,623 - table_diagnosis - DEBUG - Found merged cell: rowspan=1, colspan=3
+2025-05-08 08:23:54,623 - table_diagnosis - DEBUG - Found merged cell: rowspan=2, colspan=1
+2025-05-08 08:23:54,623 - table_diagnosis - DEBUG - Found merged cell: rowspan=2, colspan=1
+2025-05-08 08:23:54,623 - table_diagnosis - DEBUG - Found merged cell: rowspan=2, colspan=1
+2025-05-08 08:23:54,623 - table_diagnosis - DEBUG - Found merged cell: rowspan=1, colspan=3
+2025-05-08 08:23:54,623 - table_diagnosis - DEBUG - Found merged cell: rowspan=1, colspan=2
+2025-05-08 08:23:54,623 - table_diagnosis - INFO -   - Generated markdown representation (387 chars)
+2025-05-08 08:23:54,623 - table_diagnosis - DEBUG -   - Markdown:
+| Category | Sales Data | Comments |
+| --- | --- | --- |
+| Q1 | Q2 | Q3 |
+| Electronics | $25,000 | $27,000 | $30,000 | Growth trend observed |
+| 15 units | 17 units | 20 units |
+| Furniture | $120,000 (combined quarters) | Seasonal demand |
+| Clothing | $18,000 | $45,000 (Q2+Q3 combined) | Summer collection successful |
+| Totals | $43,000 | $27,000 | $30,000 | Projected Q4: $50,000 |
+2025-05-08 08:23:54,623 - table_diagnosis - INFO - Simulating ingest process for test_html_tables/complex_merged_cells.html
+2025-05-08 08:23:54,623 - table_diagnosis - INFO - Using unstructured.partition.html to process file
+2025-05-08 08:23:54,624 - table_diagnosis - ERROR - Error in simulation: 
+**********************************************************************
+  Resource [93mpunkt_tab[0m not found.
+  Please use the NLTK Downloader to obtain the resource:
+
+  [31m>>> import nltk
+  >>> nltk.download('punkt_tab')
+  [0m
+  For more information see: https://www.nltk.org/data.html
+
+  Attempted to load [93mtokenizers/punkt_tab/english/[0m
+
+  Searched in:
+    - '/Users/mattermost/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/share/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/lib/nltk_data'
+    - '/usr/share/nltk_data'
+    - '/usr/local/share/nltk_data'
+    - '/usr/lib/nltk_data'
+    - '/usr/local/lib/nltk_data'
+**********************************************************************
+
+2025-05-08 08:23:54,625 - table_diagnosis - ERROR - Traceback (most recent call last):
+  File "/Users/mattermost/Projects/RAG/mmrag5/diagnose_table_ingestion.py", line 166, in simulate_ingest_process
+    elements = partition_html(html_file)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/common/metadata.py", line 162, in wrapper
+    elements = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/chunking/dispatch.py", line 74, in wrapper
+    elements = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 95, in partition_html
+    return list(_HtmlPartitioner.iter_elements(opts))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 206, in iter_elements
+    yield from cls(opts)._iter_elements()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 219, in _iter_elements
+    for e in elements_iter:
+             ^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 361, in iter_elements
+    yield from block_item.iter_elements()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 356, in iter_elements
+    yield from self._element_from_text_or_tail(self.text or "", q, self._ElementCls)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 386, in _element_from_text_or_tail
+    yield from element_accum.flush(ElementCls)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 254, in flush
+    ElementCls = derive_element_type_from_text(normalized_text)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 914, in derive_element_type_from_text
+    if is_possible_narrative_text(text):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 74, in is_possible_narrative_text
+    if exceeds_cap_ratio(text, threshold=cap_threshold):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 270, in exceeds_cap_ratio
+    if sentence_count(text, 3) > 1:
+       ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 219, in sentence_count
+    sentences = sent_tokenize(text)
+                ^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/nlp/tokenize.py", line 54, in sent_tokenize
+    return _sent_tokenize(text)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/__init__.py", line 119, in sent_tokenize
+    tokenizer = _get_punkt_tokenizer(language)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/__init__.py", line 105, in _get_punkt_tokenizer
+    return PunktTokenizer(language)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/punkt.py", line 1744, in __init__
+    self.load_lang(lang)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/punkt.py", line 1749, in load_lang
+    lang_dir = find(f"tokenizers/punkt_tab/{lang}/")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/data.py", line 579, in find
+    raise LookupError(resource_not_found)
+LookupError: 
+**********************************************************************
+  Resource [93mpunkt_tab[0m not found.
+  Please use the NLTK Downloader to obtain the resource:
+
+  [31m>>> import nltk
+  >>> nltk.download('punkt_tab')
+  [0m
+  For more information see: https://www.nltk.org/data.html
+
+  Attempted to load [93mtokenizers/punkt_tab/english/[0m
+
+  Searched in:
+    - '/Users/mattermost/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/share/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/lib/nltk_data'
+    - '/usr/share/nltk_data'
+    - '/usr/local/share/nltk_data'
+    - '/usr/lib/nltk_data'
+    - '/usr/local/lib/nltk_data'
+**********************************************************************
+
+
+2025-05-08 08:23:54,625 - table_diagnosis - INFO - Simulated ingestion produced 0 documents
+2025-05-08 08:23:54,625 - table_diagnosis - INFO - Identified 0 table fragments in documents
+2025-05-08 08:23:54,625 - table_diagnosis - INFO - 
+
+2025-05-08 08:23:54,625 - table_diagnosis - INFO - ================================================================================
+2025-05-08 08:23:54,625 - table_diagnosis - INFO - PROCESSING: test_html_tables/simple_table.html
+2025-05-08 08:23:54,625 - table_diagnosis - INFO - ================================================================================
+2025-05-08 08:23:54,625 - table_diagnosis - INFO - Processing HTML file: test_html_tables/simple_table.html
+2025-05-08 08:23:54,625 - table_diagnosis - INFO - HTML content size: 956 bytes
+2025-05-08 08:23:54,626 - table_diagnosis - INFO - Found 1 tables in the HTML
+2025-05-08 08:23:54,626 - table_diagnosis - INFO - Table 1 structure:
+2025-05-08 08:23:54,626 - table_diagnosis - INFO -   - Contains 4 rows
+2025-05-08 08:23:54,626 - table_diagnosis - INFO -   - Has thead: True
+2025-05-08 08:23:54,626 - table_diagnosis - INFO -   - Has tbody: True
+2025-05-08 08:23:54,626 - table_diagnosis - INFO -   - Has tfoot: False
+2025-05-08 08:23:54,626 - table_diagnosis - INFO -   - Contains 0 merged cells
+2025-05-08 08:23:54,626 - table_diagnosis - INFO -   - Contains 0 nested tables
+2025-05-08 08:23:54,626 - table_diagnosis - INFO -   - First row has 4 header cells
+2025-05-08 08:23:54,626 - table_diagnosis - INFO -   - Generated markdown representation (183 chars)
+2025-05-08 08:23:54,626 - table_diagnosis - DEBUG -   - Markdown:
+| ID | Name | Department | Salary |
+| --- | --- | --- | --- |
+| 1 | John Smith | Engineering | $85,000 |
+| 2 | Jane Doe | Marketing | $75,000 |
+| 3 | Bob Johnson | Finance | $90,000 |
+2025-05-08 08:23:54,626 - table_diagnosis - INFO - Simulating ingest process for test_html_tables/simple_table.html
+2025-05-08 08:23:54,627 - table_diagnosis - INFO - Using unstructured.partition.html to process file
+2025-05-08 08:23:54,627 - table_diagnosis - ERROR - Error in simulation: 
+**********************************************************************
+  Resource [93mpunkt_tab[0m not found.
+  Please use the NLTK Downloader to obtain the resource:
+
+  [31m>>> import nltk
+  >>> nltk.download('punkt_tab')
+  [0m
+  For more information see: https://www.nltk.org/data.html
+
+  Attempted to load [93mtokenizers/punkt_tab/english/[0m
+
+  Searched in:
+    - '/Users/mattermost/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/share/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/lib/nltk_data'
+    - '/usr/share/nltk_data'
+    - '/usr/local/share/nltk_data'
+    - '/usr/lib/nltk_data'
+    - '/usr/local/lib/nltk_data'
+**********************************************************************
+
+2025-05-08 08:23:54,628 - table_diagnosis - ERROR - Traceback (most recent call last):
+  File "/Users/mattermost/Projects/RAG/mmrag5/diagnose_table_ingestion.py", line 166, in simulate_ingest_process
+    elements = partition_html(html_file)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/common/metadata.py", line 162, in wrapper
+    elements = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/chunking/dispatch.py", line 74, in wrapper
+    elements = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 95, in partition_html
+    return list(_HtmlPartitioner.iter_elements(opts))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 206, in iter_elements
+    yield from cls(opts)._iter_elements()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 219, in _iter_elements
+    for e in elements_iter:
+             ^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 361, in iter_elements
+    yield from block_item.iter_elements()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 356, in iter_elements
+    yield from self._element_from_text_or_tail(self.text or "", q, self._ElementCls)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 386, in _element_from_text_or_tail
+    yield from element_accum.flush(ElementCls)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 254, in flush
+    ElementCls = derive_element_type_from_text(normalized_text)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 914, in derive_element_type_from_text
+    if is_possible_narrative_text(text):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 74, in is_possible_narrative_text
+    if exceeds_cap_ratio(text, threshold=cap_threshold):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 270, in exceeds_cap_ratio
+    if sentence_count(text, 3) > 1:
+       ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 219, in sentence_count
+    sentences = sent_tokenize(text)
+                ^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/nlp/tokenize.py", line 54, in sent_tokenize
+    return _sent_tokenize(text)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/__init__.py", line 119, in sent_tokenize
+    tokenizer = _get_punkt_tokenizer(language)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/__init__.py", line 105, in _get_punkt_tokenizer
+    return PunktTokenizer(language)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/punkt.py", line 1744, in __init__
+    self.load_lang(lang)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/punkt.py", line 1749, in load_lang
+    lang_dir = find(f"tokenizers/punkt_tab/{lang}/")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/data.py", line 579, in find
+    raise LookupError(resource_not_found)
+LookupError: 
+**********************************************************************
+  Resource [93mpunkt_tab[0m not found.
+  Please use the NLTK Downloader to obtain the resource:
+
+  [31m>>> import nltk
+  >>> nltk.download('punkt_tab')
+  [0m
+  For more information see: https://www.nltk.org/data.html
+
+  Attempted to load [93mtokenizers/punkt_tab/english/[0m
+
+  Searched in:
+    - '/Users/mattermost/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/share/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/lib/nltk_data'
+    - '/usr/share/nltk_data'
+    - '/usr/local/share/nltk_data'
+    - '/usr/lib/nltk_data'
+    - '/usr/local/lib/nltk_data'
+**********************************************************************
+
+
+2025-05-08 08:23:54,628 - table_diagnosis - INFO - Simulated ingestion produced 0 documents
+2025-05-08 08:23:54,628 - table_diagnosis - INFO - Identified 0 table fragments in documents
+2025-05-08 08:23:54,628 - table_diagnosis - INFO - 
+
+2025-05-08 08:23:54,628 - table_diagnosis - INFO - ================================================================================
+2025-05-08 08:23:54,628 - table_diagnosis - INFO - PROCESSING: test_html_tables/special_formatting.html
+2025-05-08 08:23:54,628 - table_diagnosis - INFO - ================================================================================
+2025-05-08 08:23:54,628 - table_diagnosis - INFO - Processing HTML file: test_html_tables/special_formatting.html
+2025-05-08 08:23:54,628 - table_diagnosis - INFO - HTML content size: 2433 bytes
+2025-05-08 08:23:54,629 - table_diagnosis - INFO - Found 2 tables in the HTML
+2025-05-08 08:23:54,629 - table_diagnosis - INFO - Table 1 structure:
+2025-05-08 08:23:54,630 - table_diagnosis - INFO -   - Contains 7 rows
+2025-05-08 08:23:54,630 - table_diagnosis - INFO -   - Has thead: True
+2025-05-08 08:23:54,630 - table_diagnosis - INFO -   - Has tbody: True
+2025-05-08 08:23:54,630 - table_diagnosis - INFO -   - Has tfoot: False
+2025-05-08 08:23:54,630 - table_diagnosis - INFO -   - Contains 0 merged cells
+2025-05-08 08:23:54,630 - table_diagnosis - INFO -   - Contains 1 nested tables
+2025-05-08 08:23:54,630 - table_diagnosis - INFO -   - First row has 3 header cells
+2025-05-08 08:23:54,630 - table_diagnosis - INFO -   - Generated markdown representation (406 chars)
+2025-05-08 08:23:54,630 - table_diagnosis - DEBUG -   - Markdown:
+| Feature | Example | Description |
+| --- | --- | --- |
+| Styled Cells | This cell has styling | Tests CSS styles and classes |
+| HTML in Cells | Item 1Item 2 withboldtextItem 3 withlink | Tests HTML elements within cells |
+| Nested Table | ABCD | A | B | C | D | Tests table-within-table structure |
+| A | B |
+| C | D |
+| Mixed Content | Text in a divUnderlined span | Tests mixed content types in cells |
+2025-05-08 08:23:54,630 - table_diagnosis - INFO - Table 2 structure:
+2025-05-08 08:23:54,630 - table_diagnosis - INFO -   - Contains 2 rows
+2025-05-08 08:23:54,631 - table_diagnosis - INFO -   - Has thead: False
+2025-05-08 08:23:54,631 - table_diagnosis - INFO -   - Has tbody: False
+2025-05-08 08:23:54,631 - table_diagnosis - INFO -   - Has tfoot: False
+2025-05-08 08:23:54,631 - table_diagnosis - INFO -   - Contains 0 merged cells
+2025-05-08 08:23:54,631 - table_diagnosis - INFO -   - Contains 0 nested tables
+2025-05-08 08:23:54,631 - table_diagnosis - INFO -   - First row has 0 header cells
+2025-05-08 08:23:54,631 - table_diagnosis - INFO -   - Generated markdown representation (19 chars)
+2025-05-08 08:23:54,631 - table_diagnosis - DEBUG -   - Markdown:
+| A | B |
+| C | D |
+2025-05-08 08:23:54,631 - table_diagnosis - INFO - Simulating ingest process for test_html_tables/special_formatting.html
+2025-05-08 08:23:54,631 - table_diagnosis - INFO - Using unstructured.partition.html to process file
+2025-05-08 08:23:54,632 - table_diagnosis - ERROR - Error in simulation: 
+**********************************************************************
+  Resource [93mpunkt_tab[0m not found.
+  Please use the NLTK Downloader to obtain the resource:
+
+  [31m>>> import nltk
+  >>> nltk.download('punkt_tab')
+  [0m
+  For more information see: https://www.nltk.org/data.html
+
+  Attempted to load [93mtokenizers/punkt_tab/english/[0m
+
+  Searched in:
+    - '/Users/mattermost/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/share/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/lib/nltk_data'
+    - '/usr/share/nltk_data'
+    - '/usr/local/share/nltk_data'
+    - '/usr/lib/nltk_data'
+    - '/usr/local/lib/nltk_data'
+**********************************************************************
+
+2025-05-08 08:23:54,632 - table_diagnosis - ERROR - Traceback (most recent call last):
+  File "/Users/mattermost/Projects/RAG/mmrag5/diagnose_table_ingestion.py", line 166, in simulate_ingest_process
+    elements = partition_html(html_file)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/common/metadata.py", line 162, in wrapper
+    elements = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/chunking/dispatch.py", line 74, in wrapper
+    elements = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 95, in partition_html
+    return list(_HtmlPartitioner.iter_elements(opts))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 206, in iter_elements
+    yield from cls(opts)._iter_elements()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 219, in _iter_elements
+    for e in elements_iter:
+             ^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 361, in iter_elements
+    yield from block_item.iter_elements()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 356, in iter_elements
+    yield from self._element_from_text_or_tail(self.text or "", q, self._ElementCls)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 386, in _element_from_text_or_tail
+    yield from element_accum.flush(ElementCls)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 254, in flush
+    ElementCls = derive_element_type_from_text(normalized_text)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 914, in derive_element_type_from_text
+    if is_possible_narrative_text(text):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 74, in is_possible_narrative_text
+    if exceeds_cap_ratio(text, threshold=cap_threshold):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 270, in exceeds_cap_ratio
+    if sentence_count(text, 3) > 1:
+       ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 219, in sentence_count
+    sentences = sent_tokenize(text)
+                ^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/nlp/tokenize.py", line 54, in sent_tokenize
+    return _sent_tokenize(text)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/__init__.py", line 119, in sent_tokenize
+    tokenizer = _get_punkt_tokenizer(language)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/__init__.py", line 105, in _get_punkt_tokenizer
+    return PunktTokenizer(language)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/punkt.py", line 1744, in __init__
+    self.load_lang(lang)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/punkt.py", line 1749, in load_lang
+    lang_dir = find(f"tokenizers/punkt_tab/{lang}/")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/data.py", line 579, in find
+    raise LookupError(resource_not_found)
+LookupError: 
+**********************************************************************
+  Resource [93mpunkt_tab[0m not found.
+  Please use the NLTK Downloader to obtain the resource:
+
+  [31m>>> import nltk
+  >>> nltk.download('punkt_tab')
+  [0m
+  For more information see: https://www.nltk.org/data.html
+
+  Attempted to load [93mtokenizers/punkt_tab/english/[0m
+
+  Searched in:
+    - '/Users/mattermost/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/share/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/lib/nltk_data'
+    - '/usr/share/nltk_data'
+    - '/usr/local/share/nltk_data'
+    - '/usr/lib/nltk_data'
+    - '/usr/local/lib/nltk_data'
+**********************************************************************
+
+
+2025-05-08 08:23:54,632 - table_diagnosis - INFO - Simulated ingestion produced 0 documents
+2025-05-08 08:23:54,632 - table_diagnosis - INFO - Identified 0 table fragments in documents
+2025-05-08 08:23:54,632 - table_diagnosis - INFO - 
+
+2025-05-08 08:23:54,632 - table_diagnosis - INFO - Diagnosis complete. Check table_ingestion_diagnosis.log for details.

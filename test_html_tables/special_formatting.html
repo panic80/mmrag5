@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Special Formatted Table</title>
+    <style>
+        .highlight {
+            background-color: yellow;
+            font-weight: bold;
+        }
+        .nested-table {
+            background-color: #f0f0f0;
+            margin: 5px;
+        }
+        .custom-cell {
+            color: blue;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <h1>Table with Special Formatting</h1>
+    <p>This table tests how the system handles non-standard table structures and formatting.</p>
+    
+    <table border="1">
+        <thead>
+            <tr>
+                <th>Feature</th>
+                <th>Example</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Styled Cells</td>
+                <td class="highlight">This cell has styling</td>
+                <td>Tests CSS styles and classes</td>
+            </tr>
+            <tr>
+                <td>HTML in Cells</td>
+                <td>
+                    <ul>
+                        <li>Item 1</li>
+                        <li>Item 2 with <b>bold</b> text</li>
+                        <li>Item 3 with <a href="#">link</a></li>
+                    </ul>
+                </td>
+                <td>Tests HTML elements within cells</td>
+            </tr>
+            <tr>
+                <td>Nested Table</td>
+                <td>
+                    <table class="nested-table" border="1">
+                        <tr>
+                            <td>A</td>
+                            <td>B</td>
+                        </tr>
+                        <tr>
+                            <td>C</td>
+                            <td>D</td>
+                        </tr>
+                    </table>
+                </td>
+                <td>Tests table-within-table structure</td>
+            </tr>
+            <tr>
+                <td>Mixed Content</td>
+                <td class="custom-cell">
+                    <div>Text in a div</div>
+                    <span style="text-decoration: underline;">Underlined span</span>
+                    <br>
+                    <img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" width="10" height="10" alt="Tiny image">
+                </td>
+                <td>Tests mixed content types in cells</td>
+            </tr>
+        </tbody>
+    </table>
+</body>
+</html>

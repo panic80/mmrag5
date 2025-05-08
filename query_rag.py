@@ -6,6 +6,7 @@ Simple CLI to query a Qdrant RAG collection using OpenAI embeddings.
 from __future__ import annotations
 import os
 import sys
+import asyncio
 from typing import Sequence, Any
 
 import click
@@ -16,18 +17,90 @@ from ingest_rag import get_openai_client
 import math
 import re
 
+# Import improved retrieval components
+import improved_retrieval
+
+# Advanced similarity metrics for different query types
+class SimilarityMetrics:
+    """Collection of similarity metrics for different retrieval approaches."""
+    
+    @staticmethod
+    def cosine_sim(a: Sequence[float], b: Sequence[float]) -> float:
+        """Compute standard cosine similarity between two vectors."""
+        dot = 0.0
+        norm_a = 0.0
+        norm_b = 0.0
+        for x, y in zip(a, b):
+            dot += x * y
+            norm_a += x * x
+            norm_b += y * y
+        if norm_a <= 0.0 or norm_b <= 0.0:
+            return 0.0
+        return dot / (math.sqrt(norm_a) * math.sqrt(norm_b))
+    
+    @staticmethod
+    def dot_product(a: Sequence[float], b: Sequence[float]) -> float:
+        """Simple dot product similarity, useful when vectors are normalized."""
+        return sum(x * y for x, y in zip(a, b))
+    
+    @staticmethod
+    def euclidean_distance(a: Sequence[float], b: Sequence[float]) -> float:
+        """Euclidean distance between two vectors (converted to similarity)."""
+        dist = math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+        # Convert distance to similarity score (closer = higher score)
+        return 1.0 / (1.0 + dist)
+    
+    @staticmethod
+    def colbert_similarity(query_tokens: list[Sequence[float]], doc_vectors: Sequence[float],
+                           token_weights: list[float] = None) -> float:
+        """
+        ColBERT-style similarity that simulates late interaction between query tokens and document.
+        
+        Args:
+            query_tokens: List of token embeddings for the query
+            doc_vectors: Document vector
+            token_weights: Optional weights for query tokens (e.g., based on importance)
+            
+        Returns:
+            Similarity score
+        """
+        if not query_tokens or not doc_vectors:
+            return 0.0
+            
+        # Use uniform weights if none provided
+        if token_weights is None:
+            token_weights = [1.0] * len(query_tokens)
+            
+        # Use max-similarity of each query token to the document vector
+        # This simulates the late interaction principle of ColBERT
+        total_score = 0.0
+        total_weight = sum(token_weights)
+        
+        if total_weight <= 0:
+            return 0.0
+            
+        for token_vec, weight in zip(query_tokens, token_weights):
+            sim = SimilarityMetrics.cosine_sim(token_vec, doc_vectors)
+            total_score += weight * sim
+            
+        # Normalize by total weight
+        return total_score / total_weight
+    
+    @staticmethod
+    def get_metric(name: str):
+        """Get similarity metric function by name."""
+        metrics = {
+            "cosine": SimilarityMetrics.cosine_sim,
+            "dot": SimilarityMetrics.dot_product,
+            "euclidean": SimilarityMetrics.euclidean_distance,
+            "colbert": SimilarityMetrics.colbert_similarity
+        }
+        return metrics.get(name, SimilarityMetrics.cosine_sim)
+
+# Use this function as a wrapper around the class method for compatibility
 def _cosine_sim(a: Sequence[float], b: Sequence[float]) -> float:
-    """Compute cosine similarity between two vectors."""
-    dot = 0.0
-    norm_a = 0.0
-    norm_b = 0.0
-    for x, y in zip(a, b):
-        dot += x * y
-        norm_a += x * x
-        norm_b += y * y
-    if norm_a <= 0.0 or norm_b <= 0.0:
-        return 0.0
-    return dot / (math.sqrt(norm_a) * math.sqrt(norm_b))
+    """Compatibility wrapper for cosine similarity."""
+    return SimilarityMetrics.cosine_sim(a, b)
 
 def _mmr_rerank(points: list[Any], mmr_lambda: float) -> list[Any]:
     """Apply Maximal Marginal Relevance to reorder points for diversity."""
@@ -71,6 +144,257 @@ def _mmr_rerank(points: list[Any], mmr_lambda: float) -> list[Any]:
         selected.append(best)
         candidates.remove(best)
     return selected
+
+
+def preprocess_query(query_text: str) -> str:
+    """
+    Advanced query preprocessing to improve retrieval effectiveness.
+    
+    This function:
+    1. Removes common filler words that don't add meaning
+    2. Normalizes punctuation
+    3. Standardizes question formats
+    
+    Args:
+        query_text: The original query text
+        
+    Returns:
+        Preprocessed query text
+    """
+    import re
+    
+    # Convert to lowercase
+    query = query_text.lower()
+    
+    # Remove filler words unless they're part of quoted phrases
+    filler_words = r'\b(um|uh|well|so|like|you know|i mean|actually)\b'
+    # Preserve content in quotes
+    quoted_parts = re.findall(r'"([^"]*)"', query)
+    # Replace quotes with placeholders
+    for i, part in enumerate(quoted_parts):
+        query = query.replace(f'"{part}"', f'QUOTED_PART_{i}')
+    
+    # Remove filler words
+    query = re.sub(filler_words, '', query)
+    
+    # Standardize question formats
+    query = re.sub(r'^(can you|could you|please|would you)?\s*(tell me|show me|let me know|find|search for|find out|explain)\s*', '', query)
+    
+    # Restore quoted parts
+    for i, part in enumerate(quoted_parts):
+        query = query.replace(f'QUOTED_PART_{i}', f'"{part}"')
+    
+    # Normalize whitespace
+    query = re.sub(r'\s+', ' ', query).strip()
+    
+    return query
+
+def detect_entities(query_text: str) -> list[str]:
+    """
+    Simple entity detection to identify key terms for boosting.
+    
+    Args:
+        query_text: The query text
+        
+    Returns:
+        List of detected entities
+    """
+    import re
+    
+    entities = []
+    
+    # Extract quoted phrases as exact match entities
+    quoted = re.findall(r'"([^"]*)"', query_text)
+    entities.extend(quoted)
+    
+    # Look for capitalized phrases (potential named entities)
+    capitalized = re.findall(r'\b([A-Z][a-zA-Z]*(?:\s+[A-Z][a-zA-Z]*)*)\b', query_text)
+    entities.extend(capitalized)
+    
+    # Find potential technical terms
+    technical_terms = re.findall(r'\b([a-zA-Z]+(?:[_\-][a-zA-Z]+)+)\b', query_text)
+    entities.extend(technical_terms)
+    
+    # Find numbers and dates
+    numbers = re.findall(r'\b\d+(?:\.\d+)?\b', query_text)
+    entities.extend(numbers)
+    
+    return list(set(entities))  # Remove duplicates
+
+def analyze_query(query_text: str, default_alpha: float = 0.5) -> dict:
+    """
+    Enhanced query analysis to determine optimal retrieval parameters:
+    - Alpha weight for vector vs BM25 fusion
+    - Query-specific boosts for entities
+    - Metric selection based on query characteristics
+    
+    Args:
+        query_text: The query text to analyze
+        default_alpha: Default alpha value to use if analysis is inconclusive
+        
+    Returns:
+        Dictionary containing analysis results:
+        - alpha: weight for vector scores
+        - entities: list of key terms for potential boosting
+        - metric: recommended similarity metric
+        - expansions_needed: whether query expansion would be beneficial
+    """
+    query_lower = query_text.lower()
+    
+    # Check for factual indicators (exact entities, numbers, dates, etc.)
+    factual_indicators = ['who', 'what', 'when', 'where', 'which', 'how many', 'list', 'name']
+    factual_score = sum(1 for word in factual_indicators if word in query_lower.split())
+    
+    # Check for conceptual indicators (explanations, concepts, reasoning)
+    conceptual_indicators = ['why', 'how', 'explain', 'describe', 'compare', 'analyze', 'evaluate', 'summarize']
+    conceptual_score = sum(1 for word in factual_indicators if word in query_lower.split())
+    
+    # Detect quoted phrases (often exact matches)
+    quoted_phrases = len(re.findall(r'"([^"]*)"', query_text))
+    if quoted_phrases > 0:
+        factual_score += quoted_phrases
+    
+    # Analyze query length (longer queries tend to be more conceptual)
+    query_words = len(query_text.split())
+    if query_words > 15:
+        conceptual_score += 1
+    
+    # Detect entities for potential boosting
+    entities = detect_entities(query_text)
+    
+    # Determine if we need query expansion
+    # Short queries with few specific entities often benefit from expansion
+    expansions_needed = query_words < 8 and len(entities) < 2 and quoted_phrases == 0
+    
+    # Select metric based on query type
+    # For factual queries: pure BM25 or hybrid with higher BM25 weight works well
+    # For conceptual: semantic vectors perform better
+    if factual_score > conceptual_score:
+        metric = "hybrid_bm25_heavy"
+        alpha = max(0.3, default_alpha - 0.2)
+    elif conceptual_score > factual_score:
+        metric = "hybrid_vector_heavy"
+        alpha = min(0.7, default_alpha + 0.2)
+    else:
+        metric = "hybrid_balanced"
+        alpha = default_alpha
+    
+    # Return comprehensive analysis
+    return {
+        "alpha": alpha,
+        "entities": entities,
+        "metric": metric,
+        "expansions_needed": expansions_needed
+    }
+
+
+def build_incremental_bm25_index(collection, index_path, client, filter_obj=None, batch_size=1000):
+    """
+    Build BM25 index incrementally, avoiding full collection scan when possible.
+    
+    Args:
+        collection: Name of the Qdrant collection
+        index_path: Path to the BM25 index file
+        client: Qdrant client instance
+        filter_obj: Optional filter to apply when scrolling collection
+        batch_size: Number of records to fetch in each batch
+        
+    Returns:
+        Dictionary mapping point IDs to text for BM25 indexing
+    """
+    import json
+    import os
+    
+    # Default path if none provided
+    if index_path is None:
+        index_path = f"{collection}_bm25_index.json"
+        click.echo(f"[info] Using default BM25 index path: {index_path}")
+        
+    # Try to load existing index
+    existing_index = {}
+    if os.path.exists(index_path):
+        try:
+            with open(index_path, "r") as f:
+                existing_index = json.load(f)
+            click.echo(f"[info] Loaded {len(existing_index)} entries from existing BM25 index")
+        except Exception as e:
+            click.echo(f"[warning] Failed to load existing index: {e}")
+    
+    # Get collection info to determine if we need to update
+    try:
+        collection_info = client.get_collection(collection_name=collection)
+        if hasattr(collection_info, 'vectors_count'):
+            total_vectors = collection_info.vectors_count
+        else:
+            total_vectors = getattr(collection_info, 'points_count', 0)
+        click.echo(f"[info] Collection has {total_vectors} vectors/points")
+    except Exception as e:
+        click.echo(f"[warning] Failed to get collection info: {e}")
+        total_vectors = 0
+    
+    # Ensure total_vectors is not None
+    total_vectors = 0 if total_vectors is None else total_vectors
+    
+    # Skip if existing index covers all points
+    if total_vectors > 0 and len(existing_index) >= total_vectors:
+        click.echo(f"[info] Existing BM25 index is up-to-date ({len(existing_index)} entries)")
+        return existing_index
+    
+    # Track new entries for incremental updates
+    click.echo(f"[info] Building incremental BM25 index for collection '{collection}'")
+    new_entries = 0
+    offset = None
+    
+    # Use same metadata filter if provided
+    scroll_filter = filter_obj
+    
+    # Process in batches
+    while True:
+        records, offset = client.scroll(
+            collection_name=collection,
+            scroll_filter=scroll_filter,
+            limit=batch_size,
+            offset=offset,
+            with_payload=True,
+        )
+        
+        if not records:
+            break
+        
+        # Process this batch
+        batch_new = 0
+        for rec in records:
+            # Skip if already in index
+            if rec.id in existing_index:
+                continue
+                
+            payload = getattr(rec, 'payload', {}) or {}
+            text = payload.get("chunk_text")
+            if isinstance(text, str) and text:
+                existing_index[rec.id] = text
+                new_entries += 1
+                batch_new += 1
+        
+        if batch_new > 0:
+            click.echo(f"[info] Processed batch, added {batch_new} new entries")
+        
+        # Periodically save progress for large collections
+        if new_entries > 0 and new_entries % (batch_size * 5) == 0:
+            with open(index_path, "w") as f:
+                json.dump(existing_index, f)
+            click.echo(f"[info] Saved progress: {new_entries} new entries indexed")
+        
+        # Check if we're done
+        if offset is None:
+            break
+    
+    # Final save if we added any new entries
+    if new_entries > 0:
+        with open(index_path, "w") as f:
+            json.dump(existing_index, f)
+        click.echo(f"[info] Added {new_entries} new entries to BM25 index (total: {len(existing_index)})")
+    
+    return existing_index
 
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
@@ -167,6 +491,34 @@ def _mmr_rerank(points: list[Any], mmr_lambda: float) -> list[Any]:
     show_default=True,
     help="Apply contextual compression to focus retrieved chunks on query-relevant parts.",
 )
+@click.option(
+    "--similarity-metric",
+    type=click.Choice(["cosine", "dot", "euclidean", "colbert"]),
+    default="cosine",
+    show_default=True,
+    help="Similarity metric to use for vector search (cosine is standard, colbert simulates late interaction).",
+)
+@click.option(
+    "--fusion-method",
+    type=click.Choice(["auto", "rrf", "linear", "softmax"]),
+    default="auto",
+    show_default=True,
+    help="Fusion method for hybrid search (auto selects based on query type).",
+)
+@click.option(
+    "--entity-boost/--no-entity-boost",
+    is_flag=True,
+    default=True,
+    show_default=True,
+    help="Enable boosting of documents containing query entities.",
+)
+@click.option(
+    "--colbert-tokens",
+    type=int,
+    default=3,
+    show_default=True,
+    help="Number of query tokens to use for ColBERT-style late interaction (if using colbert similarity).",
+)
 @click.argument("query", nargs=-1, required=True)
 def main(
     collection: str,
@@ -195,11 +547,18 @@ def main(
     level: str,
     evaluate: bool,
     compress: bool,
+    similarity_metric: str,
+    fusion_method: str,
+    entity_boost: bool,
+    colbert_tokens: int,
     query: Sequence[str],
 ) -> None:
     """Embed QUERY with OpenAI and search a Qdrant RAG collection."""
     # Load .env file (if present) BEFORE reading API keys
     from pathlib import Path
+    import time
+    from functools import lru_cache
+    
     env_path = Path(".env")
     if env_path.is_file():
         try:
@@ -209,8 +568,17 @@ def main(
         except ImportError:
             pass
 
-    # Prepare the full query text
-    query_text = " ".join(query)
+    # Prepare and preprocess the full query text
+    original_query_text = " ".join(query)
+    query_text = preprocess_query(original_query_text)
+    
+    click.echo(f"[info] Processed query: {query_text}")
+    
+    # Initialize caching structures using improved_retrieval module
+    results_cache = improved_retrieval.ResultsCache()
+    
+    # Cache embedding function for reuse
+    get_cached_embedding = improved_retrieval.get_cached_embedding
 
     # Ensure OpenAI and Qdrant API keys
     if openai_api_key is None:
@@ -259,17 +627,62 @@ def main(
     for q_idx, q_text in enumerate(expanded_queries):
         if q_idx > 0:
             click.echo(f"\nProcessing expanded query {q_idx+1}: {q_text}")
+        
+        # Check cache for this query+collection combination
+        cache_key = f"{q_text}:{collection}:{k}:{str(filters)}"
+        cached_results = results_cache.get(cache_key)
+        
+        if cached_results:
+            click.echo(f"[info] Using cached search results for query {q_idx+1}")
+            all_results.extend(cached_results)
+            continue
             
-        # Embed this query
-        if hasattr(openai_client, "embeddings"):  # openai>=1.0 style
-            resp = openai_client.embeddings.create(model=model, input=[q_text])
-            vector = resp.data[0].embedding
-        else:  # legacy style
-            resp = openai_client.Embedding.create(model=model, input=[q_text])
-            vector = resp["data"][0]["embedding"]  # type: ignore[index]
+        # Embed query with advanced token support for similarity metrics
+        if similarity_metric == "colbert" and colbert_tokens > 0:
+            # For ColBERT, we need to get token-level embeddings
+            # Split query into tokens for late interaction
+            import nltk
+            try:
+                nltk.data.find('tokenizers/punkt')
+            except LookupError:
+                click.echo("[info] Downloading NLTK punkt tokenizer...")
+                nltk.download('punkt', quiet=True)
+            
+            # Tokenize the query
+            from nltk.tokenize import word_tokenize
+            query_toks = word_tokenize(q_text)
+            
+            # Limit to most important tokens
+            if len(query_toks) > colbert_tokens:
+                # Keep most significant tokens (simple heuristic - longer words often carry more meaning)
+                query_toks = sorted(query_toks, key=len, reverse=True)[:colbert_tokens]
+                click.echo(f"[info] Using {colbert_tokens} most significant tokens for ColBERT: {', '.join(query_toks)}")
+            
+            # Embed each token separately
+            token_vectors = []
+            for token in query_toks:
+                token_vec = get_cached_embedding(token, model, openai_client)
+                token_vectors.append(token_vec)
+            
+            # For standard search, we still need a combined vector
+            # (average for simplicity, could use other strategies)
+            import numpy as np
+            vector = np.mean(token_vectors, axis=0).tolist()
+            
+            # Store token vectors for later use in similarity
+            current_tokens = token_vectors
+            click.echo(f"[info] Using ColBERT-style similarity with {len(token_vectors)} token vectors")
+        else:
+            # Standard single vector embedding
+            vector = get_cached_embedding(q_text, model, openai_client)
+            current_tokens = None
             
         # Store the current query vector for later use
         current_vector = vector
+        
+        # Setup similarity function based on selected metric
+        sim_function = SimilarityMetrics.get_metric(similarity_metric)
+        click.echo(f"[info] Using {similarity_metric} similarity metric")
         
         # Build payload filter if specified (inside loop to use for each query)
         filter_obj = None
@@ -328,33 +741,41 @@ def main(
                     FieldCondition(key="level", match=MatchValue(value=selected_level))
                 ])
                 
-        # Search in Qdrant (use new query_points if available)
+        # Use improved retrieval module for search instead of direct Qdrant search
         from qdrant_client.http.exceptions import UnexpectedResponse
         try:
-            if hasattr(client, "query_points"):
-                # New API returns a QueryResponse with .points attribute
-                resp = client.query_points(
-                    collection_name=collection,
-                    query=current_vector,
-                    limit=k,
-                    with_payload=True,
-                    with_vectors=True,
-                    query_filter=filter_obj,
+            # Create an event loop if needed
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # Use improved_retrieval.search for enhanced retrieval
+            query_results = loop.run_until_complete(
+                improved_retrieval.search(
+                    query_text=q_text,
+                    collection=collection,
+                    client=client,
+                    openai_client=openai_client,
+                    model=model,
+                    k=k,
+                    filter_obj=filter_obj,
+                    alpha=alpha,
+                    rrf_k=rrf_k,
+                    fusion_method="auto",
+                    bm25_index_path=bm25_index,
+                    use_mmr=deepsearch,
+                    mmr_lambda=mmr_lambda,
+                    rerank_top=rerank_top if rerank_top > 0 else 0
                 )
-                query_results = getattr(resp, 'points', [])
-            else:
-                # Fallback to deprecated search()
-                query_results = client.search(
-                    collection_name=collection,
-                    query_vector=current_vector,
-                    limit=k,
-                    with_payload=True,
-                    with_vectors=True,
-                    query_filter=filter_obj,
-                )
-                
+            )
+            
             # Add these results to our collection
             all_results.extend(query_results)
+            
+            # Cache the results for this query
+            results_cache.set(cache_key, query_results)
             
         except UnexpectedResponse as e:
             # likely missing collection
@@ -379,14 +800,17 @@ def main(
     
     # Sort by score (descending) and take top k
     scored = [entry["point"] for entry in sorted(
-        unique_results.values(), 
-        key=lambda x: x["score"], 
+        unique_results.values(),
+        key=lambda x: x["score"],
         reverse=True
     )][:k]
     if any(p is None for p in scored):
         click.echo(f"[debug] 'scored' contains {sum(1 for p in scored if p is None)} None values after initial creation from unique_results. IDs of None points: {[getattr(p, 'id', 'N/A_None_Point') for p in unique_results.values() if p['point'] is None]}", err=True)
     # Remove any None entries to prevent downstream errors
     scored = [p for p in scored if p is not None]
+    
+    # Log that improved retrieval was successful
+    click.echo(f"[info] Successfully retrieved {len(scored)} results using improved retrieval pipeline")
     
     if use_expansion and len(expanded_queries) > 1:
         click.echo(f"[info] Merged {len(all_results)} results from {len(expanded_queries)} queries into {len(scored)} unique results")
@@ -520,7 +944,7 @@ def main(
     # Hybrid fusion (BM25 + vector) if enabled
     if hybrid:
         # Cache original scored list with vectors for MMR
-        orig_scored = scored
+        orig_scored = scored.copy() if scored else []
         try:
             import json
             from rank_bm25 import BM25Okapi
@@ -531,6 +955,7 @@ def main(
             )
             sys.exit(1)
         from qdrant_client.http.models import Filter as QFilter, HasIdCondition
+        
         # If no BM25 index path provided, try default '<collection>_bm25_index.json'
         if not bm25_index:
             default_idx = f"{collection}_bm25_index.json"
@@ -538,116 +963,166 @@ def main(
                 bm25_index = default_idx
                 click.echo(f"[info] Loading BM25 index from {bm25_index}")
 
-        # Load or build BM25 index mapping point IDs to chunk text
-        # Attempt to load a pre-built BM25 index JSON; if missing or empty, rebuild from collection
-        build_index = True
-        if bm25_index:
-            try:
-                with open(bm25_index, "r") as f:
-                    id2text = json.load(f)
-                if id2text:
-                    build_index = False
-                    click.echo(f"[info] Loaded BM25 index from {bm25_index} ({len(id2text)} entries)")
-                else:
-                    click.echo(f"[warning] BM25 index file {bm25_index} is empty, rebuilding from collection", err=True)
-            except Exception as e:
-                click.echo(f"[warning] Failed to load BM25 index '{bm25_index}': {e}, rebuilding from collection", err=True)
-                build_index = True
-        if build_index:
-            click.echo(f"[info] Building BM25 index from collection '{collection}' (this may take a while)...")
-            id2text: dict[str, str] = {}
-            offset = None
-            # use same metadata filter if any
-            scroll_filter = filter_obj if 'filter_obj' in locals() else None
-            while True:
-                records, offset = client.scroll(
-                    collection_name=collection,
-                    scroll_filter=scroll_filter,
-                    limit=1000,
-                    offset=offset,
-                    with_payload=True,
-                )
-                if not records:
-                    break
-                for rec in records:
-                    payload = getattr(rec, 'payload', {}) or {}
-                    text = payload.get("chunk_text")
-                    if isinstance(text, str) and text:
-                        id2text[rec.id] = text
-                if offset is None:
-                    break
-        # Guard against empty corpus - rank_bm25 crashes with ZeroDivisionError
-        if not id2text:
-            click.echo(
-                "[warning] No documents with 'chunk_text' payload - skipping BM25 component of hybrid search.",
-                err=True,
+        # Prepare for parallel hybrid search architecture
+        click.echo("[info] Using parallel hybrid search architecture...")
+        
+        # Set up for advanced parallel retrieval
+        async def run_parallel_retrieval():
+            """Execute parallel vector and BM25 searches using improved retrieval module"""
+            nonlocal orig_scored
+            nonlocal query_text
+            
+            # Keep original vector results (already in scored)
+            vector_results = orig_scored
+            
+            # Vector rankings (from initial Qdrant results)
+            vec_rank = {point.id: rank for rank, point in enumerate(scored, start=1) if point is not None}
+            
+            # Ensure we have vectors preserved
+            vector_map = {p.id: getattr(p, 'vector', None) for p in scored if p is not None}
+            
+            # Preserve payload for results
+            payload_map = {point.id: getattr(point, 'payload', {}) or {} for point in scored if point is not None}
+            
+            # Use improved incremental index building
+            id2text = improved_retrieval.build_incremental_bm25_index(
+                collection, bm25_index, client, filter_obj
             )
-        else:
-            ids = list(id2text.keys())
-            tokenized = [id2text[_id].split() for _id in ids]
-            # rank_bm25 expects at least one document; otherwise it raises ZeroDivisionError
-            if not tokenized:
-                click.echo(
-                    "[warning] BM25 tokenization produced an empty corpus - skipping BM25 component of hybrid search.",
-                    err=True,
-                )
+            
+            # Since we now use improved_retrieval.search for the main search process,
+            # we repurpose this section to get any additional BM25 results if needed
+            bm25_results = await improved_retrieval.bm25_search(
+                query_text, collection, k, filter_obj, client, id2text, bm25_index
+            )
+            
+            # Extract BM25 rankings
+            bm25_rank = {getattr(r, 'id', None): rank + 1
+                         for rank, r in enumerate(bm25_results)
+                         if hasattr(r, 'id')}
+            
+            return bm25_rank, id2text, payload_map, vec_rank, vector_map
+            
+        # Execute BM25 search using asyncio
+        try:
+            # Create event loop if needed or use existing one
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+            # Run the parallel retrieval
+            bm25_rank, id2text, payload_map, vec_rank, vector_map = loop.run_until_complete(
+                run_parallel_retrieval()
+            )
+            
+        except Exception as e:
+            click.echo(f"[error] Parallel retrieval failed: {e}", err=True)
+            bm25_rank = {}
+        
+        # Fusion process
+        if bm25_rank:
+            # Use improved query analysis for advanced fusion
+            query_analysis = improved_retrieval.analyze_query(query_text, alpha)
+            query_alpha = query_analysis["alpha"]
+            query_entities = query_analysis["entities"]
+            query_metric = query_analysis["metric"]
+            
+            click.echo(f"[info] Using query-dependent fusion weight: {query_alpha:.2f}")
+            
+            # Get all unique IDs from both vector and BM25 searches
+            all_ids = set(vec_rank) | set(bm25_rank)
+            
+            # Check entity presence in retrieved documents for potential boosting
+            entity_matches = {}
+            if entity_boost and query_entities:
+                click.echo(f"[info] Applying entity boosting with {len(query_entities)} entities")
+                for pid in all_ids:
+                    if pid in payload_map:
+                        text = payload_map[pid].get("chunk_text", "")
+                        if text:
+                            # Count entities present in the document
+                            matches = sum(1 for entity in query_entities
+                                         if entity.lower() in text.lower())
+                            if matches > 0:
+                                entity_matches[pid] = matches
+                
+                # Log entity matches summary
+                if entity_matches:
+                    click.echo(f"[info] Found {len(entity_matches)} documents containing query entities")
+                    if query_entities:
+                        click.echo(f"[info] Entities: {', '.join(query_entities[:3])}" +
+                                  (f" and {len(query_entities)-3} more" if len(query_entities) > 3 else ""))
+            
+            # Determine the fusion method to use
+            selected_fusion = fusion_method
+            if selected_fusion == "auto":
+                # Use query analysis to select method
+                if query_metric == "hybrid_bm25_heavy":
+                    selected_fusion = "rrf"
+                elif query_metric == "hybrid_vector_heavy":
+                    selected_fusion = "linear"
+                else:
+                    selected_fusion = "softmax"
+            
+            click.echo(f"[info] Using {selected_fusion} fusion method")
+            
+            # Extract scores from ranks for fusion
+            vec_scores = {pid: 1.0 / rank for pid, rank in vec_rank.items()}
+            bm25_scores = {pid: 1.0 / rank for pid, rank in bm25_rank.items()}
+            
+            # Apply fusion using improved retrieval module
+            # Note: This is now a secondary fusion step since improved_retrieval.search
+            # already performs fusion internally
+            fusion_func = improved_retrieval.get_fusion_method(selected_fusion)
+            if selected_fusion == "rrf":
+                fused_scores = fusion_func(vec_scores, bm25_scores, query_alpha, rrf_k)
             else:
-                bm25 = BM25Okapi(tokenized)
-                # Compute BM25 rankings
-                query_tokens = query_text.split()
-                bm25_scores = bm25.get_scores(query_tokens)
-                top_n = bm25_top or k
-                bm25_sorted = sorted(enumerate(bm25_scores), key=lambda x: x[1], reverse=True)[:top_n]
-                bm25_rank = {ids[idx]: rank + 1 for rank, (idx, _) in enumerate(bm25_sorted)}
-
-                # --- Debugging: Check for None in scored before processing ---
-                if any(p is None for p in scored):
-                    click.echo("[debug] Found None in 'scored' list before vector ranking.", err=True)
-                    # Optional: Log the contents of scored for more details if needed
-                    # click.echo(f"[debug] scored contents: {scored}", err=True)
-                # --- End Debugging ---
-
-                # Vector rankings (from initial Qdrant results)
-                vec_rank = {point.id: rank for rank, point in enumerate(scored, start=1) if point is not None}
-
-                # Reciprocal Rank Fusion
-                fused_scores: dict[str, float] = {}
-                for pid in set(vec_rank) | set(bm25_rank):
-                    score_h = 0.0
-                    if pid in vec_rank:
-                        score_h += alpha * (1.0 / (rrf_k + vec_rank[pid]))
-                    if pid in bm25_rank:
-                        score_h += (1.0 - alpha) * (1.0 / (rrf_k + bm25_rank[pid]))
-                    fused_scores[pid] = score_h
-
-                # Select top-k fused results
-                fused_ids = [pid for pid, _ in sorted(fused_scores.items(), key=lambda kv: kv[1], reverse=True)][:k]
-
-                # Build new scored list with payload lookup
-                from types import SimpleNamespace
-                payload_map = {point.id: getattr(point, 'payload', {}) or {} for point in scored if point is not None}
-                # Fetch any BM25-only payloads
-                for pid in fused_ids:
-                    if pid not in payload_map:
-                        fobj = QFilter(must=[HasIdCondition(has_id=[pid])])
-                        records, _ = client.scroll(collection_name=collection, scroll_filter=fobj, with_payload=True, limit=1)
-                        if records:
-                            rec = records[0]
-                            payload_map[pid] = getattr(rec, 'payload', {}) or {}
-                        else:
-                            payload_map[pid] = {}
-                # Replace scored with fused SimpleNamespace objects
-                # Preserve vector from original scored points
-                vector_map = {p.id: getattr(p, 'vector', None) for p in orig_scored if p is not None}
-                scored = [
-                    SimpleNamespace(
-                        id=pid,
-                        payload=payload_map.get(pid, {}),
-                        score=fused_scores.get(pid, 0.0),
-                        vector=vector_map.get(pid),
+                fused_scores = fusion_func(vec_scores, bm25_scores, query_alpha)
+                
+            # Apply entity boosting if enabled
+            if entity_boost and entity_matches:
+                for pid in fused_scores:
+                    if pid in entity_matches:
+                        boost_factor = 0.15 if query_metric == "hybrid_bm25_heavy" else 0.1
+                        entity_boost_amount = min(0.3, entity_matches[pid] * boost_factor) * fused_scores[pid]
+                        fused_scores[pid] += entity_boost_amount
+            
+            # Select top-k fused results
+            fused_ids = [pid for pid, _ in sorted(fused_scores.items(), key=lambda kv: kv[1], reverse=True)][:k]
+            
+            # Fetch any BM25-only payloads in batches for efficiency
+            bm25_only_ids = [pid for pid in fused_ids if pid not in payload_map]
+            if bm25_only_ids:
+                click.echo(f"[info] Fetching payloads for {len(bm25_only_ids)} BM25-only results")
+                
+                # Process in batches of 50 for better performance
+                batch_size = 50
+                for i in range(0, len(bm25_only_ids), batch_size):
+                    batch = bm25_only_ids[i:i+batch_size]
+                    fobj = QFilter(must=[HasIdCondition(has_id=batch)])
+                    records, _ = client.scroll(
+                        collection_name=collection,
+                        scroll_filter=fobj,
+                        with_payload=True,
+                        limit=len(batch)
                     )
-                    for pid in fused_ids
-                ]
+                    for rec in records:
+                        payload_map[rec.id] = getattr(rec, 'payload', {}) or {}
+            
+            # Build new scored list with all necessary data
+            from types import SimpleNamespace
+            scored = [
+                SimpleNamespace(
+                    id=pid,
+                    payload=payload_map.get(pid, {}),
+                    score=fused_scores.get(pid, 0.0),
+                    vector=vector_map.get(pid),
+                )
+                for pid in fused_ids
+            ]
+            
+            click.echo(f"[info] Hybrid search completed, fused {len(vec_rank)} vector and {len(bm25_rank)} BM25 results")
 
         # If BM25 fusion skipped because of empty corpus, keep original 'scored'
 
@@ -712,15 +1187,21 @@ def main(
             click.echo(f"[warning] Contextual compression failed: {e}", err=True)
             click.echo("[info] Continuing with uncompressed chunks")
 
-    # Handle no matches
-    if not scored:
-        if hybrid:
-            click.echo("[warning] No hybrid results for query.", err=True)
-        elif filters:
-            click.echo(f"[warning] No results matched filters: {filters}", err=True)
-        else:
-            click.echo("[warning] No results found for query.", err=True)
-        return
+        # Handle no matches
+        if not scored:
+            if hybrid:
+                click.echo("[warning] No hybrid results for query.", err=True)
+            elif filters:
+                click.echo(f"[warning] No results matched filters: {filters}", err=True)
+            else:
+                click.echo("[warning] No results found for query.", err=True)
+            return
+        
+        # Log cache stats periodically
+        cache_stats = results_cache.get_stats()
+        if cache_stats["size"] > 0:
+            click.echo(f"[info] Cache stats: {cache_stats['size']} entries, "
+                      f"{cache_stats['hit_ratio']:.2%} hit ratio")
     # Branch display: raw retrieval + answer or summary-only
     if raw:
         # Show raw retrieval hits

@@ -25,3 +25,4 @@ flask
 python-dateutil>=2.8
 sentence-transformers
 tenacity>=8.0.0  # For retry mechanisms with exponential backoff
+numpy>=1.20.0  # Required for improved_retrieval vector operations

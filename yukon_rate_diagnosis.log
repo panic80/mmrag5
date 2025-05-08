@@ -1,0 +1,812 @@
+2025-05-08 09:00:17,557 - yukon_diagnosis - INFO - Successfully imported table processing modules
+2025-05-08 09:00:17,557 - yukon_diagnosis - INFO - Found 4 HTML test files
+2025-05-08 09:00:17,557 - yukon_diagnosis - INFO - ================================================================================
+2025-05-08 09:00:17,557 - yukon_diagnosis - INFO - PROCESSING: test_html_tables/large_table.html
+2025-05-08 09:00:17,557 - yukon_diagnosis - INFO - ================================================================================
+2025-05-08 09:00:17,557 - yukon_diagnosis - INFO - Analyzing column header relationships in: test_html_tables/large_table.html
+2025-05-08 09:00:17,561 - yukon_diagnosis - INFO - Analyzing original table structure:
+2025-05-08 09:00:17,561 - yukon_diagnosis - INFO - Row 0 headers: ['ID', 'First Name', 'Last Name', 'Email', 'Gender', 'IP Address', 'Country', 'City', 'Company', 'Job Title']
+2025-05-08 09:00:17,562 - yukon_diagnosis - INFO - Row 1 headers: ['1', 'John', 'Smith', 'jsmith@example.com', 'Male', '192.168.1.1', 'United States', 'New York', 'Acme Corp', 'Software Engineer']
+2025-05-08 09:00:17,562 - yukon_diagnosis - INFO - Row 2 headers: ['2', 'Jane', 'Doe', 'jdoe@example.com', 'Female', '192.168.1.2', 'Canada', 'Toronto', 'XYZ Inc', 'Product Manager']
+2025-05-08 09:00:17,562 - yukon_diagnosis - INFO - Searching for meal rate data:
+2025-05-08 09:00:17,562 - yukon_diagnosis - INFO - Processing through table_parser:
+2025-05-08 09:00:17,593 - yukon_diagnosis - INFO - table_parser found 1 tables
+2025-05-08 09:00:17,593 - yukon_diagnosis - INFO - Table 1 graph structure:
+2025-05-08 09:00:17,593 - yukon_diagnosis - INFO -   - Rows: 21
+2025-05-08 09:00:17,593 - yukon_diagnosis - INFO -   - Columns: 10
+2025-05-08 09:00:17,593 - yukon_diagnosis - INFO -   - Cells: 210
+2025-05-08 09:00:17,594 - yukon_diagnosis - INFO -   - Header rows: 1
+2025-05-08 09:00:17,594 - yukon_diagnosis - INFO - Processing through table_formatter:
+2025-05-08 09:00:17,594 - yukon_diagnosis - INFO - Using formatter type: preserving
+2025-05-08 09:00:17,594 - yukon_diagnosis - INFO -   - Generated document content preview: | ID | First Name | Last Name | Email | Gender | IP Address | Country | City | Company | Job Title |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | John | Smith | jsmith@example.c...
+2025-05-08 09:00:17,594 - yukon_diagnosis - INFO - Using formatter type: enhanced_markdown
+2025-05-08 09:00:17,594 - yukon_diagnosis - INFO -   - Generated document content preview: {table_metadata: {"table_id": "6dc5e227-cfe9-4363-a31f-b3c3239b9f80", "caption": "", "merged_cells": false, "nested_tables": false}}
+| ID | First Name | Last Name | Email | Gender | IP Address | Count...
+2025-05-08 09:00:17,594 - yukon_diagnosis - INFO - Using formatter type: row_based
+2025-05-08 09:00:17,594 - yukon_diagnosis - INFO -   - Generated 20 documents
+2025-05-08 09:00:17,594 - yukon_diagnosis - INFO - Simulating ingest_rag table processing:
+2025-05-08 09:00:17,844 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): packages.unstructured.io:443
+2025-05-08 09:00:18,151 - urllib3.connectionpool - DEBUG - https://packages.unstructured.io:443 "GET /python-telemetry?version=0.17.2&platform=Darwin&python3.12&arch=arm64&gpu=False&dev=false HTTP/11" 200 598
+2025-05-08 09:00:22,530 - yukon_diagnosis - ERROR - Error in ingest_rag simulation: 
+**********************************************************************
+  Resource [93mpunkt_tab[0m not found.
+  Please use the NLTK Downloader to obtain the resource:
+
+  [31m>>> import nltk
+  >>> nltk.download('punkt_tab')
+  [0m
+  For more information see: https://www.nltk.org/data.html
+
+  Attempted to load [93mtokenizers/punkt_tab/english/[0m
+
+  Searched in:
+    - '/Users/mattermost/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/share/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/lib/nltk_data'
+    - '/usr/share/nltk_data'
+    - '/usr/local/share/nltk_data'
+    - '/usr/lib/nltk_data'
+    - '/usr/local/lib/nltk_data'
+**********************************************************************
+
+2025-05-08 09:00:22,534 - yukon_diagnosis - ERROR - Traceback (most recent call last):
+  File "/Users/mattermost/Projects/RAG/mmrag5/diagnose_yukon_issue.py", line 246, in diagnose_column_header_relationships
+    elements = partition_html(html_file)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/common/metadata.py", line 162, in wrapper
+    elements = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/chunking/dispatch.py", line 74, in wrapper
+    elements = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 95, in partition_html
+    return list(_HtmlPartitioner.iter_elements(opts))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 206, in iter_elements
+    yield from cls(opts)._iter_elements()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 219, in _iter_elements
+    for e in elements_iter:
+             ^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 361, in iter_elements
+    yield from block_item.iter_elements()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 356, in iter_elements
+    yield from self._element_from_text_or_tail(self.text or "", q, self._ElementCls)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 386, in _element_from_text_or_tail
+    yield from element_accum.flush(ElementCls)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 254, in flush
+    ElementCls = derive_element_type_from_text(normalized_text)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 914, in derive_element_type_from_text
+    if is_possible_narrative_text(text):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 74, in is_possible_narrative_text
+    if exceeds_cap_ratio(text, threshold=cap_threshold):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 270, in exceeds_cap_ratio
+    if sentence_count(text, 3) > 1:
+       ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 219, in sentence_count
+    sentences = sent_tokenize(text)
+                ^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/nlp/tokenize.py", line 54, in sent_tokenize
+    return _sent_tokenize(text)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/__init__.py", line 119, in sent_tokenize
+    tokenizer = _get_punkt_tokenizer(language)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/__init__.py", line 105, in _get_punkt_tokenizer
+    return PunktTokenizer(language)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/punkt.py", line 1744, in __init__
+    self.load_lang(lang)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/punkt.py", line 1749, in load_lang
+    lang_dir = find(f"tokenizers/punkt_tab/{lang}/")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/data.py", line 579, in find
+    raise LookupError(resource_not_found)
+LookupError: 
+**********************************************************************
+  Resource [93mpunkt_tab[0m not found.
+  Please use the NLTK Downloader to obtain the resource:
+
+  [31m>>> import nltk
+  >>> nltk.download('punkt_tab')
+  [0m
+  For more information see: https://www.nltk.org/data.html
+
+  Attempted to load [93mtokenizers/punkt_tab/english/[0m
+
+  Searched in:
+    - '/Users/mattermost/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/share/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/lib/nltk_data'
+    - '/usr/share/nltk_data'
+    - '/usr/local/share/nltk_data'
+    - '/usr/lib/nltk_data'
+    - '/usr/local/lib/nltk_data'
+**********************************************************************
+
+
+2025-05-08 09:00:22,534 - yukon_diagnosis - INFO - 
+
+2025-05-08 09:00:22,534 - yukon_diagnosis - INFO - ================================================================================
+2025-05-08 09:00:22,534 - yukon_diagnosis - INFO - PROCESSING: test_html_tables/complex_merged_cells.html
+2025-05-08 09:00:22,534 - yukon_diagnosis - INFO - ================================================================================
+2025-05-08 09:00:22,534 - yukon_diagnosis - INFO - Analyzing column header relationships in: test_html_tables/complex_merged_cells.html
+2025-05-08 09:00:22,535 - yukon_diagnosis - INFO - Analyzing original table structure:
+2025-05-08 09:00:22,535 - yukon_diagnosis - INFO - Row 0 headers: ['Category', 'Sales Data', 'Comments']
+2025-05-08 09:00:22,535 - yukon_diagnosis - INFO - Row 1 headers: ['Q1', 'Q2', 'Q3']
+2025-05-08 09:00:22,535 - yukon_diagnosis - INFO - Row 2 headers: ['Electronics', '$25,000', '$27,000', '$30,000', 'Growth trend observed']
+2025-05-08 09:00:22,535 - yukon_diagnosis - INFO - Searching for meal rate data:
+2025-05-08 09:00:22,535 - yukon_diagnosis - INFO - Processing through table_parser:
+2025-05-08 09:00:22,538 - yukon_diagnosis - INFO - table_parser found 1 tables
+2025-05-08 09:00:22,538 - yukon_diagnosis - INFO - Table 1 graph structure:
+2025-05-08 09:00:22,538 - yukon_diagnosis - INFO -   - Rows: 7
+2025-05-08 09:00:22,538 - yukon_diagnosis - INFO -   - Columns: 5
+2025-05-08 09:00:22,538 - yukon_diagnosis - INFO -   - Cells: 26
+2025-05-08 09:00:22,538 - yukon_diagnosis - INFO -   - Header rows: 2
+2025-05-08 09:00:22,538 - yukon_diagnosis - INFO - Processing through table_formatter:
+2025-05-08 09:00:22,538 - yukon_diagnosis - INFO - Using formatter type: preserving
+2025-05-08 09:00:22,538 - yukon_diagnosis - INFO -   - Generated document content preview: | Category | Sales Data | Comments |
+| Q1 | Q2 | Q3 |
+| --- | --- | --- | --- | --- |
+| Electronics | $25,000 | $27,000 | $30,000 | Growth trend observed |
+| 15 units | 17 units | 20 units |
+| Furnitu...
+2025-05-08 09:00:22,538 - yukon_diagnosis - INFO - Using formatter type: enhanced_markdown
+2025-05-08 09:00:22,538 - yukon_diagnosis - INFO -   - Generated document content preview: {table_metadata: {"table_id": "7bbf7a60-8b9f-4f59-b646-c4047f217dd6", "caption": "", "merged_cells": true, "nested_tables": false}}
+| Category *(rowspan=2)* | Sales Data *(colspan=3)* | Comments *(row...
+2025-05-08 09:00:22,538 - yukon_diagnosis - INFO - Using formatter type: row_based
+2025-05-08 09:00:22,538 - yukon_diagnosis - INFO -   - Generated 5 documents
+2025-05-08 09:00:22,538 - yukon_diagnosis - INFO - Simulating ingest_rag table processing:
+2025-05-08 09:00:22,539 - yukon_diagnosis - ERROR - Error in ingest_rag simulation: 
+**********************************************************************
+  Resource [93mpunkt_tab[0m not found.
+  Please use the NLTK Downloader to obtain the resource:
+
+  [31m>>> import nltk
+  >>> nltk.download('punkt_tab')
+  [0m
+  For more information see: https://www.nltk.org/data.html
+
+  Attempted to load [93mtokenizers/punkt_tab/english/[0m
+
+  Searched in:
+    - '/Users/mattermost/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/share/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/lib/nltk_data'
+    - '/usr/share/nltk_data'
+    - '/usr/local/share/nltk_data'
+    - '/usr/lib/nltk_data'
+    - '/usr/local/lib/nltk_data'
+**********************************************************************
+
+2025-05-08 09:00:22,540 - yukon_diagnosis - ERROR - Traceback (most recent call last):
+  File "/Users/mattermost/Projects/RAG/mmrag5/diagnose_yukon_issue.py", line 246, in diagnose_column_header_relationships
+    elements = partition_html(html_file)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/common/metadata.py", line 162, in wrapper
+    elements = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/chunking/dispatch.py", line 74, in wrapper
+    elements = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 95, in partition_html
+    return list(_HtmlPartitioner.iter_elements(opts))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 206, in iter_elements
+    yield from cls(opts)._iter_elements()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 219, in _iter_elements
+    for e in elements_iter:
+             ^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 361, in iter_elements
+    yield from block_item.iter_elements()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 356, in iter_elements
+    yield from self._element_from_text_or_tail(self.text or "", q, self._ElementCls)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 386, in _element_from_text_or_tail
+    yield from element_accum.flush(ElementCls)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 254, in flush
+    ElementCls = derive_element_type_from_text(normalized_text)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 914, in derive_element_type_from_text
+    if is_possible_narrative_text(text):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 74, in is_possible_narrative_text
+    if exceeds_cap_ratio(text, threshold=cap_threshold):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 270, in exceeds_cap_ratio
+    if sentence_count(text, 3) > 1:
+       ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 219, in sentence_count
+    sentences = sent_tokenize(text)
+                ^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/nlp/tokenize.py", line 54, in sent_tokenize
+    return _sent_tokenize(text)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/__init__.py", line 119, in sent_tokenize
+    tokenizer = _get_punkt_tokenizer(language)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/__init__.py", line 105, in _get_punkt_tokenizer
+    return PunktTokenizer(language)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/punkt.py", line 1744, in __init__
+    self.load_lang(lang)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/punkt.py", line 1749, in load_lang
+    lang_dir = find(f"tokenizers/punkt_tab/{lang}/")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/data.py", line 579, in find
+    raise LookupError(resource_not_found)
+LookupError: 
+**********************************************************************
+  Resource [93mpunkt_tab[0m not found.
+  Please use the NLTK Downloader to obtain the resource:
+
+  [31m>>> import nltk
+  >>> nltk.download('punkt_tab')
+  [0m
+  For more information see: https://www.nltk.org/data.html
+
+  Attempted to load [93mtokenizers/punkt_tab/english/[0m
+
+  Searched in:
+    - '/Users/mattermost/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/share/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/lib/nltk_data'
+    - '/usr/share/nltk_data'
+    - '/usr/local/share/nltk_data'
+    - '/usr/lib/nltk_data'
+    - '/usr/local/lib/nltk_data'
+**********************************************************************
+
+
+2025-05-08 09:00:22,540 - yukon_diagnosis - INFO - 
+
+2025-05-08 09:00:22,540 - yukon_diagnosis - INFO - ================================================================================
+2025-05-08 09:00:22,540 - yukon_diagnosis - INFO - PROCESSING: test_html_tables/simple_table.html
+2025-05-08 09:00:22,541 - yukon_diagnosis - INFO - ================================================================================
+2025-05-08 09:00:22,541 - yukon_diagnosis - INFO - Analyzing column header relationships in: test_html_tables/simple_table.html
+2025-05-08 09:00:22,541 - yukon_diagnosis - INFO - Analyzing original table structure:
+2025-05-08 09:00:22,541 - yukon_diagnosis - INFO - Row 0 headers: ['ID', 'Name', 'Department', 'Salary']
+2025-05-08 09:00:22,541 - yukon_diagnosis - INFO - Row 1 headers: ['1', 'John Smith', 'Engineering', '$85,000']
+2025-05-08 09:00:22,542 - yukon_diagnosis - INFO - Row 2 headers: ['2', 'Jane Doe', 'Marketing', '$75,000']
+2025-05-08 09:00:22,542 - yukon_diagnosis - INFO - Searching for meal rate data:
+2025-05-08 09:00:22,542 - yukon_diagnosis - INFO - Processing through table_parser:
+2025-05-08 09:00:22,543 - yukon_diagnosis - INFO - table_parser found 1 tables
+2025-05-08 09:00:22,543 - yukon_diagnosis - INFO - Table 1 graph structure:
+2025-05-08 09:00:22,543 - yukon_diagnosis - INFO -   - Rows: 4
+2025-05-08 09:00:22,543 - yukon_diagnosis - INFO -   - Columns: 4
+2025-05-08 09:00:22,543 - yukon_diagnosis - INFO -   - Cells: 16
+2025-05-08 09:00:22,543 - yukon_diagnosis - INFO -   - Header rows: 1
+2025-05-08 09:00:22,543 - yukon_diagnosis - INFO - Processing through table_formatter:
+2025-05-08 09:00:22,543 - yukon_diagnosis - INFO - Using formatter type: preserving
+2025-05-08 09:00:22,543 - yukon_diagnosis - INFO -   - Generated document content preview: | ID | Name | Department | Salary |
+| --- | --- | --- | --- |
+| 1 | John Smith | Engineering | $85,000 |
+| 2 | Jane Doe | Marketing | $75,000 |
+| 3 | Bob Johnson | Finance | $90,000 |...
+2025-05-08 09:00:22,543 - yukon_diagnosis - INFO - Using formatter type: enhanced_markdown
+2025-05-08 09:00:22,543 - yukon_diagnosis - INFO -   - Generated document content preview: {table_metadata: {"table_id": "ad103520-e08f-45fb-9767-8e32a4ba5bc4", "caption": "", "merged_cells": false, "nested_tables": false}}
+| ID | Name | Department | Salary |
+| --- | --- | --- | --- |
+| 1 |...
+2025-05-08 09:00:22,543 - yukon_diagnosis - INFO - Using formatter type: row_based
+2025-05-08 09:00:22,543 - yukon_diagnosis - INFO -   - Generated 3 documents
+2025-05-08 09:00:22,543 - yukon_diagnosis - INFO - Simulating ingest_rag table processing:
+2025-05-08 09:00:22,544 - yukon_diagnosis - ERROR - Error in ingest_rag simulation: 
+**********************************************************************
+  Resource [93mpunkt_tab[0m not found.
+  Please use the NLTK Downloader to obtain the resource:
+
+  [31m>>> import nltk
+  >>> nltk.download('punkt_tab')
+  [0m
+  For more information see: https://www.nltk.org/data.html
+
+  Attempted to load [93mtokenizers/punkt_tab/english/[0m
+
+  Searched in:
+    - '/Users/mattermost/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/share/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/lib/nltk_data'
+    - '/usr/share/nltk_data'
+    - '/usr/local/share/nltk_data'
+    - '/usr/lib/nltk_data'
+    - '/usr/local/lib/nltk_data'
+**********************************************************************
+
+2025-05-08 09:00:22,544 - yukon_diagnosis - ERROR - Traceback (most recent call last):
+  File "/Users/mattermost/Projects/RAG/mmrag5/diagnose_yukon_issue.py", line 246, in diagnose_column_header_relationships
+    elements = partition_html(html_file)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/common/metadata.py", line 162, in wrapper
+    elements = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/chunking/dispatch.py", line 74, in wrapper
+    elements = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 95, in partition_html
+    return list(_HtmlPartitioner.iter_elements(opts))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 206, in iter_elements
+    yield from cls(opts)._iter_elements()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 219, in _iter_elements
+    for e in elements_iter:
+             ^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 361, in iter_elements
+    yield from block_item.iter_elements()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 356, in iter_elements
+    yield from self._element_from_text_or_tail(self.text or "", q, self._ElementCls)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 386, in _element_from_text_or_tail
+    yield from element_accum.flush(ElementCls)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 254, in flush
+    ElementCls = derive_element_type_from_text(normalized_text)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 914, in derive_element_type_from_text
+    if is_possible_narrative_text(text):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 74, in is_possible_narrative_text
+    if exceeds_cap_ratio(text, threshold=cap_threshold):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 270, in exceeds_cap_ratio
+    if sentence_count(text, 3) > 1:
+       ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 219, in sentence_count
+    sentences = sent_tokenize(text)
+                ^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/nlp/tokenize.py", line 54, in sent_tokenize
+    return _sent_tokenize(text)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/__init__.py", line 119, in sent_tokenize
+    tokenizer = _get_punkt_tokenizer(language)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/__init__.py", line 105, in _get_punkt_tokenizer
+    return PunktTokenizer(language)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/punkt.py", line 1744, in __init__
+    self.load_lang(lang)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/punkt.py", line 1749, in load_lang
+    lang_dir = find(f"tokenizers/punkt_tab/{lang}/")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/data.py", line 579, in find
+    raise LookupError(resource_not_found)
+LookupError: 
+**********************************************************************
+  Resource [93mpunkt_tab[0m not found.
+  Please use the NLTK Downloader to obtain the resource:
+
+  [31m>>> import nltk
+  >>> nltk.download('punkt_tab')
+  [0m
+  For more information see: https://www.nltk.org/data.html
+
+  Attempted to load [93mtokenizers/punkt_tab/english/[0m
+
+  Searched in:
+    - '/Users/mattermost/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/share/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/lib/nltk_data'
+    - '/usr/share/nltk_data'
+    - '/usr/local/share/nltk_data'
+    - '/usr/lib/nltk_data'
+    - '/usr/local/lib/nltk_data'
+**********************************************************************
+
+
+2025-05-08 09:00:22,544 - yukon_diagnosis - INFO - 
+
+2025-05-08 09:00:22,544 - yukon_diagnosis - INFO - ================================================================================
+2025-05-08 09:00:22,544 - yukon_diagnosis - INFO - PROCESSING: test_html_tables/special_formatting.html
+2025-05-08 09:00:22,544 - yukon_diagnosis - INFO - ================================================================================
+2025-05-08 09:00:22,544 - yukon_diagnosis - INFO - Analyzing column header relationships in: test_html_tables/special_formatting.html
+2025-05-08 09:00:22,546 - yukon_diagnosis - INFO - Analyzing original table structure:
+2025-05-08 09:00:22,546 - yukon_diagnosis - INFO - Row 0 headers: ['Feature', 'Example', 'Description']
+2025-05-08 09:00:22,546 - yukon_diagnosis - INFO - Row 1 headers: ['Styled Cells', 'This cell has styling', 'Tests CSS styles and classes']
+2025-05-08 09:00:22,546 - yukon_diagnosis - INFO - Row 2 headers: ['HTML in Cells', 'Item 1Item 2 withboldtextItem 3 withlink', 'Tests HTML elements within cells']
+2025-05-08 09:00:22,546 - yukon_diagnosis - INFO - Searching for meal rate data:
+2025-05-08 09:00:22,546 - yukon_diagnosis - INFO - Processing through table_parser:
+2025-05-08 09:00:22,549 - yukon_diagnosis - INFO - table_parser found 2 tables
+2025-05-08 09:00:22,549 - yukon_diagnosis - INFO - Table 1 graph structure:
+2025-05-08 09:00:22,549 - yukon_diagnosis - INFO -   - Rows: 7
+2025-05-08 09:00:22,549 - yukon_diagnosis - INFO -   - Columns: 7
+2025-05-08 09:00:22,549 - yukon_diagnosis - INFO -   - Cells: 23
+2025-05-08 09:00:22,549 - yukon_diagnosis - INFO -   - Header rows: 1
+2025-05-08 09:00:22,549 - yukon_diagnosis - INFO - Table 2 graph structure:
+2025-05-08 09:00:22,549 - yukon_diagnosis - INFO -   - Rows: 2
+2025-05-08 09:00:22,549 - yukon_diagnosis - INFO -   - Columns: 2
+2025-05-08 09:00:22,549 - yukon_diagnosis - INFO -   - Cells: 4
+2025-05-08 09:00:22,549 - yukon_diagnosis - INFO -   - Header rows: 1
+2025-05-08 09:00:22,549 - yukon_diagnosis - INFO - Processing through table_formatter:
+2025-05-08 09:00:22,549 - yukon_diagnosis - INFO - Using formatter type: preserving
+2025-05-08 09:00:22,549 - yukon_diagnosis - INFO -   - Generated document content preview: | Feature | Example | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| Styled Cells | This cell has styling | Tests CSS styles and classes |
+| HTML in Cells | Item 1Item 2 withboldtextItem ...
+2025-05-08 09:00:22,549 - yukon_diagnosis - INFO - Using formatter type: enhanced_markdown
+2025-05-08 09:00:22,549 - yukon_diagnosis - INFO -   - Generated document content preview: {table_metadata: {"table_id": "6989cd63-0668-4fa0-852b-9caf7b5d2fc9", "caption": "", "merged_cells": false, "nested_tables": true}}
+| Feature | Example | Description |
+| --- | --- | --- | --- | --- | ...
+2025-05-08 09:00:22,549 - yukon_diagnosis - INFO - Using formatter type: row_based
+2025-05-08 09:00:22,549 - yukon_diagnosis - INFO -   - Generated 6 documents
+2025-05-08 09:00:22,549 - yukon_diagnosis - INFO - Simulating ingest_rag table processing:
+2025-05-08 09:00:22,550 - yukon_diagnosis - ERROR - Error in ingest_rag simulation: 
+**********************************************************************
+  Resource [93mpunkt_tab[0m not found.
+  Please use the NLTK Downloader to obtain the resource:
+
+  [31m>>> import nltk
+  >>> nltk.download('punkt_tab')
+  [0m
+  For more information see: https://www.nltk.org/data.html
+
+  Attempted to load [93mtokenizers/punkt_tab/english/[0m
+
+  Searched in:
+    - '/Users/mattermost/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/share/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/lib/nltk_data'
+    - '/usr/share/nltk_data'
+    - '/usr/local/share/nltk_data'
+    - '/usr/lib/nltk_data'
+    - '/usr/local/lib/nltk_data'
+**********************************************************************
+
+2025-05-08 09:00:22,551 - yukon_diagnosis - ERROR - Traceback (most recent call last):
+  File "/Users/mattermost/Projects/RAG/mmrag5/diagnose_yukon_issue.py", line 246, in diagnose_column_header_relationships
+    elements = partition_html(html_file)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/common/metadata.py", line 162, in wrapper
+    elements = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/chunking/dispatch.py", line 74, in wrapper
+    elements = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 95, in partition_html
+    return list(_HtmlPartitioner.iter_elements(opts))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 206, in iter_elements
+    yield from cls(opts)._iter_elements()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/partition.py", line 219, in _iter_elements
+    for e in elements_iter:
+             ^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 361, in iter_elements
+    yield from block_item.iter_elements()
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 356, in iter_elements
+    yield from self._element_from_text_or_tail(self.text or "", q, self._ElementCls)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 386, in _element_from_text_or_tail
+    yield from element_accum.flush(ElementCls)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 254, in flush
+    ElementCls = derive_element_type_from_text(normalized_text)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/html/parser.py", line 914, in derive_element_type_from_text
+    if is_possible_narrative_text(text):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 74, in is_possible_narrative_text
+    if exceeds_cap_ratio(text, threshold=cap_threshold):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 270, in exceeds_cap_ratio
+    if sentence_count(text, 3) > 1:
+       ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/partition/text_type.py", line 219, in sentence_count
+    sentences = sent_tokenize(text)
+                ^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/unstructured/nlp/tokenize.py", line 54, in sent_tokenize
+    return _sent_tokenize(text)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/__init__.py", line 119, in sent_tokenize
+    tokenizer = _get_punkt_tokenizer(language)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/__init__.py", line 105, in _get_punkt_tokenizer
+    return PunktTokenizer(language)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/punkt.py", line 1744, in __init__
+    self.load_lang(lang)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/tokenize/punkt.py", line 1749, in load_lang
+    lang_dir = find(f"tokenizers/punkt_tab/{lang}/")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/nltk/data.py", line 579, in find
+    raise LookupError(resource_not_found)
+LookupError: 
+**********************************************************************
+  Resource [93mpunkt_tab[0m not found.
+  Please use the NLTK Downloader to obtain the resource:
+
+  [31m>>> import nltk
+  >>> nltk.download('punkt_tab')
+  [0m
+  For more information see: https://www.nltk.org/data.html
+
+  Attempted to load [93mtokenizers/punkt_tab/english/[0m
+
+  Searched in:
+    - '/Users/mattermost/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/share/nltk_data'
+    - '/Library/Frameworks/Python.framework/Versions/3.12/lib/nltk_data'
+    - '/usr/share/nltk_data'
+    - '/usr/local/share/nltk_data'
+    - '/usr/lib/nltk_data'
+    - '/usr/local/lib/nltk_data'
+**********************************************************************
+
+
+2025-05-08 09:00:22,551 - yukon_diagnosis - INFO - 
+
+2025-05-08 09:00:22,551 - yukon_diagnosis - INFO - ================================================================================
+2025-05-08 09:00:22,551 - yukon_diagnosis - INFO - DIAGNOSIS SUMMARY
+2025-05-08 09:00:22,551 - yukon_diagnosis - INFO - ================================================================================
+2025-05-08 09:00:22,551 - yukon_diagnosis - INFO - 
+Based on the analysis, possible sources of incorrect Yukon lunch rates are:
+
+1. Column/Header Association Loss: The row-by-row table splitting in ingest_rag.py
+   (lines ~1427-1440) loses proper association between column headers and data cells,
+   especially with merged cells.
+
+2. Merged Cell Misinterpretation: When headers like "Yukon & Alaska" span multiple
+   columns, the system may not correctly associate data cells with the right portion
+   of the merged header.
+
+3. Row-Based Table Fragmentation: The system's approach to creating a separate document
+   for each table row (with copies of the header) may lead to incorrect column matching
+   during retrieval.
+
+4. Data Cell Value Correlation: During retrieval, query about "Yukon" gets matched to 
+   the wrong column due to corrupted header-to-data relationships.
+
+Check the logs for specific details about how Yukon columns were processed in the test data.
+
+2025-05-08 09:00:22,551 - yukon_diagnosis - INFO - Diagnosis complete. Check yukon_rate_diagnosis.log for details.
+2025-05-08 09:10:23,278 - __main__ - ERROR - Failed to import table modules. Make sure they're in the current directory or PYTHONPATH
+2025-05-08 09:10:23,278 - __main__ - ERROR - Still couldn't import required modules: cannot import name 'parse_html_table' from 'table_parser' (/Users/mattermost/Projects/RAG/mmrag5/table_parser.py)
+2025-05-08 09:11:07,735 - __main__ - ERROR - Failed to import table modules. Make sure they're in the current directory or PYTHONPATH
+2025-05-08 09:11:07,735 - __main__ - ERROR - Still couldn't import required modules: cannot import name 'format_table_as_markdown' from 'table_formatter' (/Users/mattermost/Projects/RAG/mmrag5/table_formatter.py)
+2025-05-08 09:11:33,298 - __main__ - INFO - Successfully imported table modules
+2025-05-08 09:11:33,298 - __main__ - INFO - Starting diagnosis of Yukon lunch rate issue
+2025-05-08 09:11:33,298 - __main__ - INFO - Downloading HTML from https://www.njc-cnm.gc.ca/directive/d10/v238/en?print
+2025-05-08 09:11:34,474 - __main__ - INFO - Saved HTML content to meal_rates_table.html
+2025-05-08 09:11:34,474 - __main__ - INFO - Successfully downloaded and saved HTML content
+2025-05-08 09:11:34,563 - __main__ - INFO - Searching for the meal rates table...
+2025-05-08 09:11:34,567 - __main__ - INFO - Found the meal rates table with Yukon & Alaska column
+2025-05-08 09:11:34,567 - __main__ - INFO - Successfully extracted the meal rates table
+2025-05-08 09:11:34,569 - __main__ - INFO - Saved the extracted table HTML to meal_rates_table_only.html
+2025-05-08 09:11:34,569 - __main__ - INFO - Analyzing table structure...
+2025-05-08 09:11:34,569 - __main__ - INFO - Found 2 header rows in thead
+2025-05-08 09:11:34,569 - __main__ - INFO - Found 'Yukon' in header at position (1,2): 'Yukon & Alaska', colspan=1, rowspan=1
+2025-05-08 09:11:34,569 - __main__ - INFO - Found 40 data rows in tbody
+2025-05-08 09:11:34,570 - __main__ - INFO - Found 'lunch' in data row 10, cell 0: 'lunch - 100% (up to 30th day)'
+2025-05-08 09:11:34,570 - __main__ - INFO - Lunch row values: ['lunch - 100% (up to 30th\xa0day)', '27.40*', '25.65', '37.00', '37.05']
+2025-05-08 09:11:34,570 - __main__ - INFO - Column 'row_label' value: 'lunch - 100% (up to 30th day)'
+2025-05-08 09:11:34,570 - __main__ - INFO - Column 'canada_usa' value: '27.40*'
+2025-05-08 09:11:34,570 - __main__ - INFO - Column 'yukon_alaska' value: '25.65'
+2025-05-08 09:11:34,570 - __main__ - INFO - Column 'nwt' value: '37.00'
+2025-05-08 09:11:34,570 - __main__ - INFO - Column 'nunavut' value: '37.05'
+2025-05-08 09:11:34,570 - __main__ - INFO - Found 'lunch' in data row 11, cell 0: 'lunch - 75% (31st to 120th day)'
+2025-05-08 09:11:34,570 - __main__ - INFO - Lunch row values: ['lunch - 75% (31st\xa0to 120th\xa0day)', '20.55*', '19.25', '27.75', '27.80']
+2025-05-08 09:11:34,570 - __main__ - INFO - Column 'row_label' value: 'lunch - 75% (31st to 120th day)'
+2025-05-08 09:11:34,570 - __main__ - INFO - Column 'canada_usa' value: '20.55*'
+2025-05-08 09:11:34,570 - __main__ - INFO - Column 'yukon_alaska' value: '19.25'
+2025-05-08 09:11:34,570 - __main__ - INFO - Column 'nwt' value: '27.75'
+2025-05-08 09:11:34,570 - __main__ - INFO - Column 'nunavut' value: '27.80'
+2025-05-08 09:11:34,570 - __main__ - INFO - Found 'lunch' in data row 12, cell 0: 'lunch – 50% (121st day onward)'
+2025-05-08 09:11:34,570 - __main__ - INFO - Lunch row values: ['lunch – 50% (121st\xa0day onward)', '13.70*', '12.85', '18.50', '18.55']
+2025-05-08 09:11:34,570 - __main__ - INFO - Column 'row_label' value: 'lunch – 50% (121st day onward)'
+2025-05-08 09:11:34,570 - __main__ - INFO - Column 'canada_usa' value: '13.70*'
+2025-05-08 09:11:34,570 - __main__ - INFO - Column 'yukon_alaska' value: '12.85'
+2025-05-08 09:11:34,570 - __main__ - INFO - Column 'nwt' value: '18.50'
+2025-05-08 09:11:34,570 - __main__ - INFO - Column 'nunavut' value: '18.55'
+2025-05-08 09:11:34,571 - __main__ - INFO - Testing table extraction with the system's parser...
+2025-05-08 09:11:34,604 - __main__ - INFO - Parser returned a table with 42 rows and 5 columns
+2025-05-08 09:11:34,604 - __main__ - INFO - Parser identified 2 header rows
+2025-05-08 09:11:34,605 - __main__ - INFO - Parser found 19 merged cells
+2025-05-08 09:11:34,605 - __main__ - INFO - Merged cell at (0, 1): '', colspan=4, rowspan=1
+2025-05-08 09:11:34,606 - __main__ - INFO - Merged cell at (2, 0): '', colspan=5, rowspan=1
+2025-05-08 09:11:34,607 - __main__ - INFO - Merged cell at (3, 0): '', colspan=5, rowspan=1
+2025-05-08 09:11:34,607 - __main__ - INFO - Merged cell at (6, 0): '', colspan=5, rowspan=1
+2025-05-08 09:11:34,607 - __main__ - INFO - Merged cell at (7, 0): '', colspan=5, rowspan=1
+2025-05-08 09:11:34,607 - __main__ - INFO - Merged cell at (11, 0): '', colspan=5, rowspan=1
+2025-05-08 09:11:34,608 - __main__ - INFO - Merged cell at (15, 0): '', colspan=5, rowspan=1
+2025-05-08 09:11:34,608 - __main__ - INFO - Merged cell at (19, 0): '', colspan=5, rowspan=1
+2025-05-08 09:11:34,608 - __main__ - INFO - Merged cell at (23, 0): '', colspan=5, rowspan=1
+2025-05-08 09:11:34,609 - __main__ - INFO - Merged cell at (26, 0): '', colspan=5, rowspan=1
+2025-05-08 09:11:34,610 - __main__ - INFO - Merged cell at (27, 0): '', colspan=5, rowspan=1
+2025-05-08 09:11:34,610 - __main__ - INFO - Merged cell at (31, 0): '', colspan=5, rowspan=1
+2025-05-08 09:11:34,610 - __main__ - INFO - Merged cell at (32, 0): '', colspan=5, rowspan=1
+2025-05-08 09:11:34,610 - __main__ - INFO - Merged cell at (36, 0): '', colspan=5, rowspan=1
+2025-05-08 09:11:34,610 - __main__ - INFO - Merged cell at (37, 0): '', colspan=5, rowspan=1
+2025-05-08 09:11:34,610 - __main__ - INFO - Merged cell at (38, 0): '', colspan=5, rowspan=1
+2025-05-08 09:11:34,611 - __main__ - INFO - Merged cell at (39, 0): '', colspan=5, rowspan=1
+2025-05-08 09:11:34,611 - __main__ - INFO - Merged cell at (40, 0): '', colspan=5, rowspan=1
+2025-05-08 09:11:34,611 - __main__ - INFO - Merged cell at (41, 0): '', colspan=5, rowspan=1
+2025-05-08 09:11:34,612 - __main__ - INFO - Testing markdown conversion...
+2025-05-08 09:11:34,613 - __main__ - INFO - Successfully converted table to markdown
+2025-05-08 09:11:34,614 - __main__ - INFO - Saved markdown to meal_rates_table.md
+2025-05-08 09:11:34,615 - __main__ - INFO - Markdown has 43 lines
+2025-05-08 09:11:34,618 - __main__ - INFO - Found header separator at line 3
+2025-05-08 09:11:34,618 - __main__ - INFO - Found 'Yukon' in markdown line 2: '|  | Canada & USA | Yukon & Alaska | N.W.T. | Nunavut |'
+2025-05-08 09:11:34,618 - __main__ - INFO - Found 'lunch' in markdown line 14: '| lunch - 100% (up to 30thday) | 27.40* | 25.65 | 37.00 | 37.05 |'
+2025-05-08 09:11:34,619 - __main__ - INFO - Lunch rate row values in markdown: ['', 'lunch - 100% (up to 30thday)', '27.40*', '25.65', '37.00', '37.05', '']
+2025-05-08 09:11:34,619 - __main__ - INFO - Found 'lunch' in markdown line 15: '| lunch - 75% (31stto 120thday) | 20.55* | 19.25 | 27.75 | 27.80 |'
+2025-05-08 09:11:34,619 - __main__ - INFO - Lunch rate row values in markdown: ['', 'lunch - 75% (31stto 120thday)', '20.55*', '19.25', '27.75', '27.80', '']
+2025-05-08 09:11:34,619 - __main__ - INFO - Found 'lunch' in markdown line 16: '| lunch – 50% (121stday onward) | 13.70* | 12.85 | 18.50 | 18.55 |'
+2025-05-08 09:11:34,619 - __main__ - INFO - Lunch rate row values in markdown: ['', 'lunch – 50% (121stday onward)', '13.70*', '12.85', '18.50', '18.55', '']
+2025-05-08 09:11:34,619 - __main__ - INFO - Testing row-based chunking impact...
+2025-05-08 09:11:34,619 - __main__ - INFO - Found 2 header row(s) in markdown
+2025-05-08 09:11:34,619 - __main__ - INFO - Found 40 data row(s) in markdown
+2025-05-08 09:11:34,620 - __main__ - INFO - Creating chunk for lunch row: '| lunch - 100% (up to 30thday) | 27.40* | 25.65 | 37.00 | 37.05 |'
+2025-05-08 09:11:34,620 - __main__ - INFO - Chunked lunch row has these columns: ['lunch - 100% (up to 30thday)', '27.40*', '25.65', '37.00', '37.05']
+2025-05-08 09:11:34,620 - __main__ - INFO - In chunked lunch row: Label='lunch - 100% (up to 30thday)', Canada/USA='27.40*', Yukon/Alaska='25.65', NWT='37.00'
+2025-05-08 09:11:34,620 - __main__ - INFO - Creating chunk for lunch row: '| lunch - 75% (31stto 120thday) | 20.55* | 19.25 | 27.75 | 27.80 |'
+2025-05-08 09:11:34,620 - __main__ - INFO - Chunked lunch row has these columns: ['lunch - 75% (31stto 120thday)', '20.55*', '19.25', '27.75', '27.80']
+2025-05-08 09:11:34,621 - __main__ - INFO - In chunked lunch row: Label='lunch - 75% (31stto 120thday)', Canada/USA='20.55*', Yukon/Alaska='19.25', NWT='27.75'
+2025-05-08 09:11:34,621 - __main__ - INFO - Creating chunk for lunch row: '| lunch – 50% (121stday onward) | 13.70* | 12.85 | 18.50 | 18.55 |'
+2025-05-08 09:11:34,622 - __main__ - INFO - Chunked lunch row has these columns: ['lunch – 50% (121stday onward)', '13.70*', '12.85', '18.50', '18.55']
+2025-05-08 09:11:34,622 - __main__ - INFO - In chunked lunch row: Label='lunch – 50% (121stday onward)', Canada/USA='13.70*', Yukon/Alaska='12.85', NWT='18.50'
+2025-05-08 09:11:34,622 - __main__ - INFO - Created 40 row-based chunks in total
+2025-05-08 09:11:34,622 - __main__ - INFO - Found 3 chunks related to lunch rates for Yukon
+2025-05-08 09:11:34,622 - __main__ - INFO - Saved a sample lunch rate chunk to sample_lunch_chunk.md
+2025-05-08 09:11:34,622 - __main__ - INFO - Simulating query processing for 'lunch rate in Yukon'...
+2025-05-08 09:11:34,622 - __main__ - INFO - 
+Analyzing lunch rate chunk 1:
+2025-05-08 09:11:34,622 - __main__ - INFO - Chunk 1 explicitly mentions 'Yukon': True
+2025-05-08 09:11:34,623 - __main__ - INFO - Label: lunch - 100% (up to 30thday)
+2025-05-08 09:11:34,623 - __main__ - INFO - Canada & USA value: 27.40*
+2025-05-08 09:11:34,623 - __main__ - INFO - Yukon & Alaska value: 25.65
+2025-05-08 09:11:34,623 - __main__ - INFO - NWT value: 37.00
+2025-05-08 09:11:34,623 - __main__ - INFO - Headers in chunk: '|  | Canadian $ (taxes included) |'
+2025-05-08 09:11:34,623 - __main__ - INFO - Rate type - 100%: True, 75%: False, 50%: False
+2025-05-08 09:11:34,623 - __main__ - INFO - Chunk contains the correct value $25.65
+2025-05-08 09:11:34,623 - __main__ - INFO - Value $25.65 is in column 2 (should be in Yukon & Alaska column)
+2025-05-08 09:11:34,623 - __main__ - INFO - 
+Analyzing lunch rate chunk 2:
+2025-05-08 09:11:34,623 - __main__ - INFO - Chunk 2 explicitly mentions 'Yukon': True
+2025-05-08 09:11:34,623 - __main__ - INFO - Label: lunch - 75% (31stto 120thday)
+2025-05-08 09:11:34,623 - __main__ - INFO - Canada & USA value: 20.55*
+2025-05-08 09:11:34,623 - __main__ - INFO - Yukon & Alaska value: 19.25
+2025-05-08 09:11:34,623 - __main__ - INFO - NWT value: 27.75
+2025-05-08 09:11:34,623 - __main__ - INFO - Headers in chunk: '|  | Canadian $ (taxes included) |'
+2025-05-08 09:11:34,623 - __main__ - INFO - Rate type - 100%: False, 75%: True, 50%: False
+2025-05-08 09:11:34,623 - __main__ - INFO - Chunk contains the incorrect value $27.75
+2025-05-08 09:11:34,623 - __main__ - INFO - Chunk contains the incorrect value $20.55
+2025-05-08 09:11:34,623 - __main__ - INFO - Chunk contains the correct value $19.25
+2025-05-08 09:11:34,623 - __main__ - INFO - Value $27.75 is in column 3 (should be in NWT column)
+2025-05-08 09:11:34,623 - __main__ - INFO - 
+Analyzing lunch rate chunk 3:
+2025-05-08 09:11:34,623 - __main__ - INFO - Chunk 3 explicitly mentions 'Yukon': True
+2025-05-08 09:11:34,623 - __main__ - INFO - Label: lunch – 50% (121stday onward)
+2025-05-08 09:11:34,623 - __main__ - INFO - Canada & USA value: 13.70*
+2025-05-08 09:11:34,623 - __main__ - INFO - Yukon & Alaska value: 12.85
+2025-05-08 09:11:34,623 - __main__ - INFO - NWT value: 18.50
+2025-05-08 09:11:34,623 - __main__ - INFO - Headers in chunk: '|  | Canadian $ (taxes included) |'
+2025-05-08 09:11:34,623 - __main__ - INFO - Rate type - 100%: False, 75%: False, 50%: True
+2025-05-08 09:11:34,623 - __main__ - INFO - Chunk contains the incorrect value $13.70
+2025-05-08 09:11:34,623 - __main__ - INFO - Chunk contains the correct value $12.85
+2025-05-08 09:11:34,623 - __main__ - INFO - Completed diagnosis of Yukon lunch rate issue
+2025-05-08 09:25:27,180 - __main__ - INFO - Successfully imported table modules
+2025-05-08 09:25:27,181 - __main__ - INFO - Starting diagnosis of Yukon lunch rate issue
+2025-05-08 09:25:27,181 - __main__ - INFO - Downloading HTML from https://www.njc-cnm.gc.ca/directive/d10/v238/en?print
+2025-05-08 09:25:27,442 - __main__ - INFO - Saved HTML content to meal_rates_table.html
+2025-05-08 09:25:27,442 - __main__ - INFO - Successfully downloaded and saved HTML content
+2025-05-08 09:25:27,511 - __main__ - INFO - Searching for the meal rates table...
+2025-05-08 09:25:27,515 - __main__ - INFO - Found the meal rates table with Yukon & Alaska column
+2025-05-08 09:25:27,515 - __main__ - INFO - Successfully extracted the meal rates table
+2025-05-08 09:25:27,535 - __main__ - INFO - Saved the extracted table HTML to meal_rates_table_only.html
+2025-05-08 09:25:27,539 - __main__ - INFO - Analyzing table structure...
+2025-05-08 09:25:27,539 - __main__ - INFO - Found 2 header rows in thead
+2025-05-08 09:25:27,540 - __main__ - INFO - Found 'Yukon' in header at position (1,2): 'Yukon & Alaska', colspan=1, rowspan=1
+2025-05-08 09:25:27,541 - __main__ - INFO - Found 40 data rows in tbody
+2025-05-08 09:25:27,541 - __main__ - INFO - Found 'lunch' in data row 10, cell 0: 'lunch - 100% (up to 30th day)'
+2025-05-08 09:25:27,541 - __main__ - INFO - Lunch row values: ['lunch - 100% (up to 30th\xa0day)', '27.40*', '25.65', '37.00', '37.05']
+2025-05-08 09:25:27,541 - __main__ - INFO - Column 'row_label' value: 'lunch - 100% (up to 30th day)'
+2025-05-08 09:25:27,541 - __main__ - INFO - Column 'canada_usa' value: '27.40*'
+2025-05-08 09:25:27,541 - __main__ - INFO - Column 'yukon_alaska' value: '25.65'
+2025-05-08 09:25:27,541 - __main__ - INFO - Column 'nwt' value: '37.00'
+2025-05-08 09:25:27,541 - __main__ - INFO - Column 'nunavut' value: '37.05'
+2025-05-08 09:25:27,554 - __main__ - INFO - Found 'lunch' in data row 11, cell 0: 'lunch - 75% (31st to 120th day)'
+2025-05-08 09:25:27,555 - __main__ - INFO - Lunch row values: ['lunch - 75% (31st\xa0to 120th\xa0day)', '20.55*', '19.25', '27.75', '27.80']
+2025-05-08 09:25:27,555 - __main__ - INFO - Column 'row_label' value: 'lunch - 75% (31st to 120th day)'
+2025-05-08 09:25:27,555 - __main__ - INFO - Column 'canada_usa' value: '20.55*'
+2025-05-08 09:25:27,555 - __main__ - INFO - Column 'yukon_alaska' value: '19.25'
+2025-05-08 09:25:27,555 - __main__ - INFO - Column 'nwt' value: '27.75'
+2025-05-08 09:25:27,555 - __main__ - INFO - Column 'nunavut' value: '27.80'
+2025-05-08 09:25:27,555 - __main__ - INFO - Found 'lunch' in data row 12, cell 0: 'lunch – 50% (121st day onward)'
+2025-05-08 09:25:27,555 - __main__ - INFO - Lunch row values: ['lunch – 50% (121st\xa0day onward)', '13.70*', '12.85', '18.50', '18.55']
+2025-05-08 09:25:27,555 - __main__ - INFO - Column 'row_label' value: 'lunch – 50% (121st day onward)'
+2025-05-08 09:25:27,555 - __main__ - INFO - Column 'canada_usa' value: '13.70*'
+2025-05-08 09:25:27,555 - __main__ - INFO - Column 'yukon_alaska' value: '12.85'
+2025-05-08 09:25:27,555 - __main__ - INFO - Column 'nwt' value: '18.50'
+2025-05-08 09:25:27,555 - __main__ - INFO - Column 'nunavut' value: '18.55'
+2025-05-08 09:25:27,559 - __main__ - INFO - Testing table extraction with the system's parser...
+2025-05-08 09:25:27,594 - __main__ - INFO - Parser returned a table with 42 rows and 5 columns
+2025-05-08 09:25:27,594 - __main__ - INFO - Parser identified 2 header rows
+2025-05-08 09:25:27,594 - __main__ - INFO - Parser found 19 merged cells
+2025-05-08 09:25:27,594 - __main__ - INFO - Merged cell at (0, 1): '', colspan=4, rowspan=1
+2025-05-08 09:25:27,594 - __main__ - INFO - Merged cell at (2, 0): '', colspan=5, rowspan=1
+2025-05-08 09:25:27,594 - __main__ - INFO - Merged cell at (3, 0): '', colspan=5, rowspan=1
+2025-05-08 09:25:27,594 - __main__ - INFO - Merged cell at (6, 0): '', colspan=5, rowspan=1
+2025-05-08 09:25:27,594 - __main__ - INFO - Merged cell at (7, 0): '', colspan=5, rowspan=1
+2025-05-08 09:25:27,594 - __main__ - INFO - Merged cell at (11, 0): '', colspan=5, rowspan=1
+2025-05-08 09:25:27,594 - __main__ - INFO - Merged cell at (15, 0): '', colspan=5, rowspan=1
+2025-05-08 09:25:27,594 - __main__ - INFO - Merged cell at (19, 0): '', colspan=5, rowspan=1
+2025-05-08 09:25:27,594 - __main__ - INFO - Merged cell at (23, 0): '', colspan=5, rowspan=1
+2025-05-08 09:25:27,594 - __main__ - INFO - Merged cell at (26, 0): '', colspan=5, rowspan=1
+2025-05-08 09:25:27,594 - __main__ - INFO - Merged cell at (27, 0): '', colspan=5, rowspan=1
+2025-05-08 09:25:27,594 - __main__ - INFO - Merged cell at (31, 0): '', colspan=5, rowspan=1
+2025-05-08 09:25:27,594 - __main__ - INFO - Merged cell at (32, 0): '', colspan=5, rowspan=1
+2025-05-08 09:25:27,594 - __main__ - INFO - Merged cell at (36, 0): '', colspan=5, rowspan=1
+2025-05-08 09:25:27,594 - __main__ - INFO - Merged cell at (37, 0): '', colspan=5, rowspan=1
+2025-05-08 09:25:27,594 - __main__ - INFO - Merged cell at (38, 0): '', colspan=5, rowspan=1
+2025-05-08 09:25:27,594 - __main__ - INFO - Merged cell at (39, 0): '', colspan=5, rowspan=1
+2025-05-08 09:25:27,594 - __main__ - INFO - Merged cell at (40, 0): '', colspan=5, rowspan=1
+2025-05-08 09:25:27,594 - __main__ - INFO - Merged cell at (41, 0): '', colspan=5, rowspan=1
+2025-05-08 09:25:27,594 - __main__ - INFO - Testing markdown conversion...
+2025-05-08 09:25:27,594 - __main__ - INFO - Successfully converted table to markdown
+2025-05-08 09:25:27,595 - __main__ - INFO - Saved markdown to meal_rates_table.md
+2025-05-08 09:25:27,595 - __main__ - INFO - Markdown has 43 lines
+2025-05-08 09:25:27,595 - __main__ - INFO - Found header separator at line 3
+2025-05-08 09:25:27,595 - __main__ - INFO - Found 'Yukon' in markdown line 2: '|  | Canada & USA | Yukon & Alaska | N.W.T. | Nunavut |'
+2025-05-08 09:25:27,595 - __main__ - INFO - Found 'lunch' in markdown line 14: '| lunch - 100% (up to 30thday) | 27.40* | 25.65 | 37.00 | 37.05 |'
+2025-05-08 09:25:27,595 - __main__ - INFO - Lunch rate row values in markdown: ['', 'lunch - 100% (up to 30thday)', '27.40*', '25.65', '37.00', '37.05', '']
+2025-05-08 09:25:27,595 - __main__ - INFO - Found 'lunch' in markdown line 15: '| lunch - 75% (31stto 120thday) | 20.55* | 19.25 | 27.75 | 27.80 |'
+2025-05-08 09:25:27,595 - __main__ - INFO - Lunch rate row values in markdown: ['', 'lunch - 75% (31stto 120thday)', '20.55*', '19.25', '27.75', '27.80', '']
+2025-05-08 09:25:27,595 - __main__ - INFO - Found 'lunch' in markdown line 16: '| lunch – 50% (121stday onward) | 13.70* | 12.85 | 18.50 | 18.55 |'
+2025-05-08 09:25:27,595 - __main__ - INFO - Lunch rate row values in markdown: ['', 'lunch – 50% (121stday onward)', '13.70*', '12.85', '18.50', '18.55', '']
+2025-05-08 09:25:27,595 - __main__ - INFO - Testing row-based chunking impact...
+2025-05-08 09:25:27,595 - __main__ - INFO - Found 2 header row(s) in markdown
+2025-05-08 09:25:27,595 - __main__ - INFO - Found 40 data row(s) in markdown
+2025-05-08 09:25:27,595 - __main__ - INFO - Creating chunk for lunch row: '| lunch - 100% (up to 30thday) | 27.40* | 25.65 | 37.00 | 37.05 |'
+2025-05-08 09:25:27,595 - __main__ - INFO - Chunked lunch row has these columns: ['lunch - 100% (up to 30thday)', '27.40*', '25.65', '37.00', '37.05']
+2025-05-08 09:25:27,595 - __main__ - INFO - In chunked lunch row: Label='lunch - 100% (up to 30thday)', Canada/USA='27.40*', Yukon/Alaska='25.65', NWT='37.00'
+2025-05-08 09:25:27,595 - __main__ - INFO - Creating chunk for lunch row: '| lunch - 75% (31stto 120thday) | 20.55* | 19.25 | 27.75 | 27.80 |'
+2025-05-08 09:25:27,595 - __main__ - INFO - Chunked lunch row has these columns: ['lunch - 75% (31stto 120thday)', '20.55*', '19.25', '27.75', '27.80']
+2025-05-08 09:25:27,595 - __main__ - INFO - In chunked lunch row: Label='lunch - 75% (31stto 120thday)', Canada/USA='20.55*', Yukon/Alaska='19.25', NWT='27.75'
+2025-05-08 09:25:27,595 - __main__ - INFO - Creating chunk for lunch row: '| lunch – 50% (121stday onward) | 13.70* | 12.85 | 18.50 | 18.55 |'
+2025-05-08 09:25:27,595 - __main__ - INFO - Chunked lunch row has these columns: ['lunch – 50% (121stday onward)', '13.70*', '12.85', '18.50', '18.55']
+2025-05-08 09:25:27,595 - __main__ - INFO - In chunked lunch row: Label='lunch – 50% (121stday onward)', Canada/USA='13.70*', Yukon/Alaska='12.85', NWT='18.50'
+2025-05-08 09:25:27,595 - __main__ - INFO - Created 40 row-based chunks in total
+2025-05-08 09:25:27,595 - __main__ - INFO - Found 3 chunks related to lunch rates for Yukon
+2025-05-08 09:25:27,596 - __main__ - INFO - Saved a sample lunch rate chunk to sample_lunch_chunk.md
+2025-05-08 09:25:27,596 - __main__ - INFO - Simulating query processing for 'lunch rate in Yukon'...
+2025-05-08 09:25:27,596 - __main__ - INFO - 
+Analyzing lunch rate chunk 1:
+2025-05-08 09:25:27,596 - __main__ - INFO - Chunk 1 explicitly mentions 'Yukon': True
+2025-05-08 09:25:27,596 - __main__ - INFO - Label: lunch - 100% (up to 30thday)
+2025-05-08 09:25:27,596 - __main__ - INFO - Canada & USA value: 27.40*
+2025-05-08 09:25:27,596 - __main__ - INFO - Yukon & Alaska value: 25.65
+2025-05-08 09:25:27,596 - __main__ - INFO - NWT value: 37.00
+2025-05-08 09:25:27,596 - __main__ - INFO - Headers in chunk: '|  | Canadian $ (taxes included) |'
+2025-05-08 09:25:27,596 - __main__ - INFO - Rate type - 100%: True, 75%: False, 50%: False
+2025-05-08 09:25:27,596 - __main__ - INFO - Chunk contains the correct value $25.65
+2025-05-08 09:25:27,596 - __main__ - INFO - Value $25.65 is in column 2 (should be in Yukon & Alaska column)
+2025-05-08 09:25:27,596 - __main__ - INFO - 
+Analyzing lunch rate chunk 2:
+2025-05-08 09:25:27,596 - __main__ - INFO - Chunk 2 explicitly mentions 'Yukon': True
+2025-05-08 09:25:27,596 - __main__ - INFO - Label: lunch - 75% (31stto 120thday)
+2025-05-08 09:25:27,596 - __main__ - INFO - Canada & USA value: 20.55*
+2025-05-08 09:25:27,596 - __main__ - INFO - Yukon & Alaska value: 19.25
+2025-05-08 09:25:27,596 - __main__ - INFO - NWT value: 27.75
+2025-05-08 09:25:27,596 - __main__ - INFO - Headers in chunk: '|  | Canadian $ (taxes included) |'
+2025-05-08 09:25:27,596 - __main__ - INFO - Rate type - 100%: False, 75%: True, 50%: False
+2025-05-08 09:25:27,596 - __main__ - INFO - Chunk contains the incorrect value $27.75
+2025-05-08 09:25:27,596 - __main__ - INFO - Chunk contains the incorrect value $20.55
+2025-05-08 09:25:27,596 - __main__ - INFO - Chunk contains the correct value $19.25
+2025-05-08 09:25:27,596 - __main__ - INFO - Value $27.75 is in column 3 (should be in NWT column)
+2025-05-08 09:25:27,596 - __main__ - INFO - 
+Analyzing lunch rate chunk 3:
+2025-05-08 09:25:27,596 - __main__ - INFO - Chunk 3 explicitly mentions 'Yukon': True
+2025-05-08 09:25:27,596 - __main__ - INFO - Label: lunch – 50% (121stday onward)
+2025-05-08 09:25:27,596 - __main__ - INFO - Canada & USA value: 13.70*
+2025-05-08 09:25:27,596 - __main__ - INFO - Yukon & Alaska value: 12.85
+2025-05-08 09:25:27,596 - __main__ - INFO - NWT value: 18.50
+2025-05-08 09:25:27,596 - __main__ - INFO - Headers in chunk: '|  | Canadian $ (taxes included) |'
+2025-05-08 09:25:27,596 - __main__ - INFO - Rate type - 100%: False, 75%: False, 50%: True
+2025-05-08 09:25:27,596 - __main__ - INFO - Chunk contains the incorrect value $13.70
+2025-05-08 09:25:27,596 - __main__ - INFO - Chunk contains the correct value $12.85
+2025-05-08 09:25:27,596 - __main__ - INFO - Completed diagnosis of Yukon lunch rate issue
